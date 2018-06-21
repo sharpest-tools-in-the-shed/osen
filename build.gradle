@@ -1,0 +1,39 @@
+buildscript {
+  ext.kotlin_version = '1.2.41'
+  ext.kotlin_coroutines_version = '0.22.5'
+  ext.classpath_scanner_version = '3.0.3'
+  ext.jackson_version = '2.9.5'
+
+  repositories {
+    mavenCentral()
+    jcenter()
+  }
+
+  dependencies {
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+  }
+}
+
+group 'net.sharpest-tools-in-the-shed'
+version '0.0.1'
+
+apply plugin: 'kotlin'
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  compile "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+  compile "io.github.lukehutch:fast-classpath-scanner:$classpath_scanner_version"
+  compile "org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlin_coroutines_version"
+  compile "com.fasterxml.jackson.core:jackson-databind:$jackson_version"
+  compile "com.fasterxml.jackson.module:jackson-module-kotlin:$jackson_version"
+}
+
+compileKotlin {
+  kotlinOptions.jvmTarget = "1.8"
+}
+compileTestKotlin {
+  kotlinOptions.jvmTarget = "1.8"
+}
