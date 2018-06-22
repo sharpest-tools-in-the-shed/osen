@@ -8,37 +8,63 @@ import java.nio.charset.StandardCharsets
 import java.util.*
 
 data class Message(val topic: String, val type: String, val payload: Any?) {
-    companion object {
-        private val mapper = ObjectMapper().registerModule(KotlinModule())
+    private val mapper = ObjectMapper().registerModule(KotlinModule())
 
-        fun serializePayload(message: Message): Message {
-            var serializedPayload: ByteArray? = null
+    fun serialize(): SerializedMessage {
+        var serializedPayload: ByteArray? = null
 
-            try {
-                serializedPayload = mapper.writeValueAsBytes(message.payload)
-            } catch (e: JsonParseException) {
-                println("Unable to serialize payload: ${message.payload} for message: $message")
-            }
-
-            return Message(message.topic, message.type, serializedPayload)
+        try {
+            serializedPayload = mapper.writeValueAsBytes(payload)
+        } catch (e: JsonParseException) {
+            println("Unable to serialize payload: $payload} for message: $this")
         }
 
-        fun <T> deserializePayload(message: Message, clazz: Class<T>): Message {
-            var deserializedPayload: T? = null
+        if (serializedPayload == null)
+            serializedPayload = ByteArray(0)
 
-            try {
-                deserializedPayload = mapper.readValue(message.payload as ByteArray, clazz)
-            } catch (e: JsonParseException) {
-                println("Unable to deserialize payload: ${message.payload} for message: $message")
-            }
-
-            return Message(message.topic, message.type, deserializedPayload)
-        }
+        return SerializedMessage(topic, type, serializedPayload)
     }
 }
-data class PackageMetadata(val port: Int, val timestampsec: Long = Date().time)
 
-class Package(val message: Message, val metadata: PackageMetadata) {
+data class SerializedMessage(val topic: String, val type: String, val payload: ByteArray) {
+    private val mapper = ObjectMapper().registerModule(KotlinModule())
+
+    fun <T> deserialize(clazz: Class<T>): Message {
+        var deserializedPayload: T? = null
+
+        try {
+            deserializedPayload = mapper.readValue(payload, clazz)
+        } catch (e: JsonParseException) {
+            println("Unable to deserialize payload: $payload for message: $this")
+        }
+
+        return Message(topic, type, deserializedPayload)
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as SerializedMessage
+
+        if (topic != other.topic) return false
+        if (type != other.type) return false
+        if (!Arrays.equals(payload, other.payload)) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = topic.hashCode()
+        result = 31 * result + type.hashCode()
+        result = 31 * result + Arrays.hashCode(payload)
+        return result
+    }
+}
+
+data class PackageMetadata(val port: Int)
+
+class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     companion object {
         private val mapper = ObjectMapper().registerModule(KotlinModule())
 
@@ -81,4 +107,4 @@ data class Address(val host: String, val port: Int) {
     }
 }
 
-abstract class Payload
+interface Payload

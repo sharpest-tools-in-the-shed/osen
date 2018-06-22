@@ -9,7 +9,7 @@ import kotlin.concurrent.thread
 typealias TopicHandlers = HashMap<String, TopicController>
 data class TopicController(val controller: Any, val listeners: HashMap<String, Method>)
 
-class P2PNetwork(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 1024) {
+class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 1024) {
     private val topicHandlers: TopicHandlers = hashMapOf()
 
     init {
@@ -75,12 +75,12 @@ class P2PNetwork(private val listeningPort: Int, private val maxPacketSizeBytes:
             val messageHandler = topicHandler.listeners[type]!! // TODO
 
 
-            val payload = messageHandler.parameters
+            val payloadParameter = messageHandler.parameters
                     .find { parameter ->
-                        parameter.type.isInstance(Payload::class.java)
+                        Payload::class.java.isAssignableFrom(parameter.type)
                     }
 
-            val message = Message.deserializePayload(pkg.message, payload!!.type)
+            val message = pkg.message.deserialize(payloadParameter!!.type)
 
             messageHandler.invoke(topicHandler.controller, message.payload, actualRecipient) // TODO: serialization =CCC
         }
@@ -97,7 +97,7 @@ class P2PNetwork(private val listeningPort: Int, private val maxPacketSizeBytes:
 
         fun send(recipient: Address, message: Message, listeningPort: Int, maxPacketSizeBytes: Int = 1024) = launch {
             val metadata = PackageMetadata(listeningPort)
-            val pkg = Package(Message.serializePayload(message), metadata)
+            val pkg = Package(message.serialize(), metadata)
             writePackage(pkg, recipient, maxPacketSizeBytes)
 
             println("Sent $pkg to $recipient")
@@ -115,10 +115,6 @@ class P2PNetwork(private val listeningPort: Int, private val maxPacketSizeBytes:
             clientSocket.send(packet)
         }
     }
-}
-
-inline fun <reified L : Any, reified R : Any> isSubClassOf(): Boolean {
-    return R::class.java.isAssignableFrom(L::class.java)
 }
 
 @Target(AnnotationTarget.CLASS)

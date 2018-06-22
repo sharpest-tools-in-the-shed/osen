@@ -1,6 +1,7 @@
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 
+
 @P2PController("_KAD")
 class KademliaController {
     val mapper = ObjectMapper().registerModule(KotlinModule())
@@ -11,7 +12,7 @@ class KademliaController {
 
         val addr = Address("localhost", 1337)
         val message = Message("_KAD", "PONG", PongPayload())
-        P2PNetwork.send(addr, message, 1337)
+        P2P.send(addr, message, 1337)
     }
 
     @On("PONG")
@@ -23,11 +24,11 @@ class KademliaController {
 fun main(args: Array<String>) {
     drawBanner()
 
-    val net = P2PNetwork(1337)
+    val net = P2P(1337)
 
     val addr = Address("localhost", 1337)
     val message = Message("_KAD", "PING", PingPayload())
-    P2PNetwork.send(addr, message, 1337)
+    P2P.send(addr, message, 1337)
 }
 
 fun drawBanner() {
@@ -43,5 +44,5 @@ fun drawBanner() {
     )
 }
 
-data class PongPayload(val text1: String = "text") : Payload()
-data class PingPayload(val text: String = "test") : Payload()
+data class PongPayload(val text1: String = "text") : Payload
+data class PingPayload(val text: String = "test") : Payload
