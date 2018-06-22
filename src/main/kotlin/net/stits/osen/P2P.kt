@@ -103,21 +103,44 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
             val topic = pkg.message.topic
             val type = pkg.message.type
 
-            val topicHandler = topicHandlers[topic]!! // TODO
-            val messageHandler = topicHandler.listeners[type]!! // TODO
+            val topicHandler = topicHandlers[topic]
+            if (topicHandler == null) {
+                println("No controller for topic $topic, skipping...")
+                continue
+            }
 
-            // TODO: add parameters determinition
-            // TODO: maybe make only Address determinible (so we can remove Payload and use any other class as payload)
-            val payloadParameter = messageHandler.parameters
-                    .find { parameter ->
-                        Payload::class.java.isAssignableFrom(parameter.type)
+            val messageHandler = topicHandler.listeners[type]
+            if (messageHandler == null) {
+                println("No method to handle message type $type of topic $topic, skipping...")
+            }
+
+            messageHandler!!
+
+            val arguments = hashMapOf<Int, Any?>()
+            if (messageHandler.parameters.size > 2) {
+                println("Method ${messageHandler.name} of class ${topicHandler.controller} has more then 2 arguments, skipping...")
+                continue
+            }
+
+            // detecting the right parameter order
+            messageHandler.parameters
+                    .forEachIndexed { index, parameter ->
+                        if (Address::class.java.isAssignableFrom(parameter.type))
+                            arguments[index] = actualRecipient
+                        else {
+                            if (pkg.message.payload.isEmpty())
+                                arguments[index] = null
+                            else
+                                arguments[index] = pkg.message.deserialize(parameter.type).payload
+                        }
                     }
 
-            // TODO: add [] payload handling
-            val message = pkg.message.deserialize(payloadParameter!!.type)
-
             launch {
-                messageHandler.invoke(topicHandler.controller, message.payload, actualRecipient)
+                when (arguments.size) {
+                    0 -> messageHandler.invoke(topicHandler.controller)
+                    1 -> messageHandler.invoke(topicHandler.controller, arguments[0])
+                    2 -> messageHandler.invoke(topicHandler.controller, arguments[0], arguments[1])
+                }
             }
         }
     }

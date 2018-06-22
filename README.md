@@ -79,4 +79,4 @@ val message = Message("EXAMPLE", "PING", PingPayload("Hello")
 P2P.send(receiver, message, SOME_PORT_WE_ARE_LISTENING_TO)
 ```
 
-Example is in test package. Technical details are in javadocs. Good luck.
+Example is in the test package. Technical details are in javadocs. Good luck.

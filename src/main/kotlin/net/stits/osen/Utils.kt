@@ -16,11 +16,6 @@ import java.util.*
 data class PackageMetadata(val port: Int)
 
 /**
- * Every @On annotated method can receive some payload (that users specifies by themselves), this payload should implement Payload interface // TODO: get rid
- */
-interface Payload
-
-/**
  * Just a wrapper around InetAddress
  */
 data class Address(val host: String, val port: Int) {
