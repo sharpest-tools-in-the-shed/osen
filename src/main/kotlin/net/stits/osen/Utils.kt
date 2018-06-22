@@ -1,3 +1,5 @@
+package net.stits.osen
+
 import com.fasterxml.jackson.core.JsonParseException
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.JsonMappingException
@@ -6,6 +8,17 @@ import com.fasterxml.jackson.module.kotlin.KotlinModule
 import java.net.InetAddress
 import java.nio.charset.StandardCharsets
 import java.util.*
+
+
+data class PackageMetadata(val port: Int)
+
+interface Payload
+
+data class Address(val host: String, val port: Int) {
+    fun getInetAddress(): InetAddress {
+        return InetAddress.getByName(host)
+    }
+}
 
 data class Message(val topic: String, val type: String, val payload: Any?) {
     private val mapper = ObjectMapper().registerModule(KotlinModule())
@@ -62,8 +75,6 @@ data class SerializedMessage(val topic: String, val type: String, val payload: B
     }
 }
 
-data class PackageMetadata(val port: Int)
-
 class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     companion object {
         private val mapper = ObjectMapper().registerModule(KotlinModule())
@@ -92,7 +103,7 @@ class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     }
 
     override fun toString(): String {
-        val pack = Package.serialize(this)
+        val pack = serialize(this)
 
         return if (pack != null)
             "[Package]: ${pack.toString(StandardCharsets.UTF_8)}"
@@ -101,10 +112,15 @@ class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     }
 }
 
-data class Address(val host: String, val port: Int) {
-    fun getInetAddress(): InetAddress {
-        return InetAddress.getByName(host)
-    }
+fun drawBanner() {
+    println(
+                    "#######  #####  ####### #     # \n" +
+                    "#     # #     # #       ##    # \n" +
+                    "#     # #       #       # #   # \n" +
+                    "#     #  #####  #####   #  #  # \n" +
+                    "#     #       # #       #   # # \n" +
+                    "#     # #     # #       #    ## \n" +
+                    "#######  #####  ####### #     # \n" +
+                    "--- P2P messaging framework --- \n"
+    )
 }
-
-interface Payload

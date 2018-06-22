@@ -1,47 +1,53 @@
+package net.stits.osen
+
 import io.github.lukehutch.fastclasspathscanner.FastClasspathScanner
 import kotlinx.coroutines.experimental.launch
 import java.lang.reflect.Method
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.nio.charset.StandardCharsets
-import kotlin.concurrent.thread
+
 
 typealias TopicHandlers = HashMap<String, TopicController>
+
 data class TopicController(val controller: Any, val listeners: HashMap<String, Method>)
 
-class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 1024) {
+class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 1024, packageToScan: String? = null) {
     private val topicHandlers: TopicHandlers = hashMapOf()
 
     init {
-        FastClasspathScanner()
-                .matchClassesWithAnnotation(P2PController::class.java) { controller ->
-                    val messageTopic = controller.getAnnotation(P2PController::class.java).topic
-                    println("Found P2P controller: ${controller.canonicalName} (topic: $messageTopic)")
+        val scanner: FastClasspathScanner = if (packageToScan == null)
+            FastClasspathScanner()
+        else
+            FastClasspathScanner(packageToScan)
 
-                    val onMethods = controller.methods.filter { method -> method.isAnnotationPresent(On::class.java) }
-                    val listeners = hashMapOf<String, Method>()
+        scanner.matchClassesWithAnnotation(P2PController::class.java) { controller ->
+            val messageTopic = controller.getAnnotation(P2PController::class.java).topic
+            println("Found net.stits.osen.P2P controller: ${controller.canonicalName} (topic: $messageTopic)")
 
-                    onMethods.forEach { method ->
-                        val messageType = method.getAnnotation(On::class.java).type
-                        val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
+            val onMethods = controller.methods.filter { method -> method.isAnnotationPresent(On::class.java) }
+            val listeners = hashMapOf<String, Method>()
 
-                        println("\tFound @On annotated method: ${method.name} (type: $messageType)")
-                        if (methodArgs.isNotEmpty())
-                            println("\t - Parameters: ${methodArgs.joinToString(", ")}")
+            onMethods.forEach { method ->
+                val messageType = method.getAnnotation(On::class.java).type
+                val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
 
-                        listeners[messageType] = method
-                    }
+                println("\tFound @net.stits.osen.On annotated method: ${method.name} (type: $messageType)")
+                if (methodArgs.isNotEmpty())
+                    println("\t - Parameters: ${methodArgs.joinToString(", ")}")
 
-                    val topicController = TopicController(controller.newInstance(), listeners)
-                    topicHandlers[messageTopic] = topicController
-                }
-                .scan()
+                listeners[messageType] = method
+            }
+
+            val topicController = TopicController(controller.newInstance(), listeners)
+            topicHandlers[messageTopic] = topicController
+        }
+
+        scanner.scan()
 
         println("Handlers parsed successfully, initializing network...")
 
-        thread {
-            initNetwork()
-        }
+        initNetwork()
     }
 
     private fun initNetwork() {
@@ -80,6 +86,7 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
                         Payload::class.java.isAssignableFrom(parameter.type)
                     }
 
+            // TODO: add [] payload handling
             val message = pkg.message.deserialize(payloadParameter!!.type)
 
             messageHandler.invoke(topicHandler.controller, message.payload, actualRecipient) // TODO: serialization =CCC
