@@ -10,19 +10,45 @@ import java.nio.charset.StandardCharsets
 import java.util.*
 
 
+/**
+ * For now it's just a port on which we are listening to (so remote peer can send us messages too) but maybe sometime here will be more
+ */
 data class PackageMetadata(val port: Int)
 
+/**
+ * Every @On annotated method can receive some payload (that users specifies by themselves), this payload should implement Payload interface // TODO: get rid
+ */
 interface Payload
 
+/**
+ * Just a wrapper around InetAddress
+ */
 data class Address(val host: String, val port: Int) {
     fun getInetAddress(): InetAddress {
         return InetAddress.getByName(host)
     }
 }
 
+/**
+ * Class that represents user-defined payload of UPD-packet.
+ * Sending this message via P2P.send() will trigger @On-annotated method on remote peer.
+ * Topic and Type are used to define some namespaces (Topic is high level, Type is low level). Lets suppose you need to
+ * implement some protocol - you should use protocol identifier (e.g. name) as Topic and protocol-specific message identifiers
+ * as Types. Example: you need to implement Kademlia protocol, it has 4 types of messages (store, find_node, find_value, ping),
+ * so your topic can be like "KAD" and types can be like "STORE", "FIND_NODE", "FIND_VALUE", "PING" and maybe "PONG" :)
+ *
+ * @param topic {String} nothing to say - Message Topic
+ * @param type {String} same as topic, but Message Type
+ * @param payload {Any?} any payload you want to send (if null - no payload will be sent). It would be nice to create
+ * data class for each payload type you send. If remote peer has mismatched payload parameter in its @On method it will throw JsonParseException.
+ */
 data class Message(val topic: String, val type: String, val payload: Any?) {
     private val mapper = ObjectMapper().registerModule(KotlinModule())
 
+    /**
+     * Serializes payload of this message. Cause: Any serializes as ByteString (in my case for some reason), so we need to
+     * manually serialize it to ByteArray and then manually deserialize in needed type.
+     */
     fun serialize(): SerializedMessage {
         var serializedPayload: ByteArray? = null
 
@@ -39,9 +65,17 @@ data class Message(val topic: String, val type: String, val payload: Any?) {
     }
 }
 
+/**
+ * Message with serialized payload. For inner usage only.
+ */
 data class SerializedMessage(val topic: String, val type: String, val payload: ByteArray) {
     private val mapper = ObjectMapper().registerModule(KotlinModule())
 
+    /**
+     * Deserializes payload in given class
+     *
+     * @param clazz {Class<T>} class to deserialize
+     */
     fun <T> deserialize(clazz: Class<T>): Message {
         var deserializedPayload: T? = null
 
@@ -75,10 +109,16 @@ data class SerializedMessage(val topic: String, val type: String, val payload: B
     }
 }
 
+/**
+ * Abstraction on UPD-packet. The main reason is to attach some semantic meta-information to it.
+ */
 class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     companion object {
         private val mapper = ObjectMapper().registerModule(KotlinModule())
 
+        /**
+         * Deserializes from bytes
+         */
         fun deserialize(jsonBytes: ByteArray): Package? {
             var pack: Package? = null
             try {
@@ -90,6 +130,9 @@ class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
             return pack
         }
 
+        /**
+         * Serializes in bytes
+         */
         fun serialize(pkg: Package): ByteArray? {
             var bytes: ByteArray? = null
             try {
@@ -112,6 +155,9 @@ class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     }
 }
 
+/**
+ * Draws an amazing banner
+ */
 fun drawBanner() {
     println(
                     "#######  #####  ####### #     # \n" +

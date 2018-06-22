@@ -1,7 +1,5 @@
 package net.stits.osen.controller
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.KotlinModule
 import net.stits.osen.*
 
 
@@ -17,7 +15,6 @@ data class PingPayload(val text: String = "test") : Payload
 
 @P2PController(TOPIC_TEST)
 class ExampleController {
-    val mapper = ObjectMapper().registerModule(KotlinModule())
 
     @On(TestMessageTypes.PING)
     fun handlePing(payload: PingPayload, sender: Address) {
