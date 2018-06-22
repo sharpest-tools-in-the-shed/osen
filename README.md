@@ -4,6 +4,7 @@ _It's very like Spring but Osen._
 ## OSEN - Kotlin P2P messaging made easy
 Library to send some UDP-messages and easily process ingoing ones. Implement multiple network protocols in one application
 in rapid way.
+Zero-dependency (actually has only two: jackson and lightweight classpath scanner)
 
 #### By example
 Let's suppose you need to implement some very heavy protocol called Example Protocol.

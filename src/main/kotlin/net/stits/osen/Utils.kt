@@ -8,6 +8,7 @@ import com.fasterxml.jackson.module.kotlin.KotlinModule
 import java.net.InetAddress
 import java.nio.charset.StandardCharsets
 import java.util.*
+import java.util.logging.Logger
 
 
 /**
@@ -40,6 +41,10 @@ data class Address(val host: String, val port: Int) {
 data class Message(val topic: String, val type: String, val payload: Any?) {
     private val mapper = ObjectMapper().registerModule(KotlinModule())
 
+    companion object {
+        val logger = loggerFor(Message::class.java)
+    }
+
     /**
      * Serializes payload of this message. Cause: Any serializes as ByteString (in my case for some reason), so we need to
      * manually serialize it to ByteArray and then manually deserialize in needed type.
@@ -50,7 +55,7 @@ data class Message(val topic: String, val type: String, val payload: Any?) {
         try {
             serializedPayload = mapper.writeValueAsBytes(payload)
         } catch (e: JsonParseException) {
-            println("Unable to serialize payload: $payload} for message: $this")
+            logger.warning("Unable to serialize payload: $payload} for message: $this")
         }
 
         if (serializedPayload == null)
@@ -66,6 +71,10 @@ data class Message(val topic: String, val type: String, val payload: Any?) {
 data class SerializedMessage(val topic: String, val type: String, val payload: ByteArray) {
     private val mapper = ObjectMapper().registerModule(KotlinModule())
 
+    companion object {
+        val logger = loggerFor(SerializedMessage::class.java)
+    }
+
     /**
      * Deserializes payload in given class
      *
@@ -77,7 +86,7 @@ data class SerializedMessage(val topic: String, val type: String, val payload: B
         try {
             deserializedPayload = mapper.readValue(payload, clazz)
         } catch (e: JsonParseException) {
-            println("Unable to deserialize payload: $payload for message: $this")
+            logger.warning("Unable to deserialize payload: $payload for message: $this")
         }
 
         return Message(topic, type, deserializedPayload)
@@ -110,6 +119,7 @@ data class SerializedMessage(val topic: String, val type: String, val payload: B
 class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     companion object {
         private val mapper = ObjectMapper().registerModule(KotlinModule())
+        val logger = loggerFor(Package::class.java)
 
         /**
          * Deserializes from bytes
@@ -119,7 +129,7 @@ class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
             try {
                 pack = mapper.readValue(jsonBytes, object : TypeReference<Package>() {})
             } catch (e: JsonParseException) {
-                println("Unable to parse json from bytes: ${jsonBytes.toString(StandardCharsets.UTF_8)}")
+                logger.warning("Unable to parse json from bytes: ${jsonBytes.toString(StandardCharsets.UTF_8)}")
             }
 
             return pack
@@ -133,7 +143,7 @@ class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
             try {
                 bytes = mapper.writeValueAsBytes(pkg)
             } catch (e: JsonMappingException) {
-                println("Unable to map package to json: $pkg")
+                logger.warning("Unable to map package to json: $pkg")
             }
 
             return bytes
@@ -165,3 +175,8 @@ fun drawBanner() {
                     "--- P2P messaging framework --- \n"
     )
 }
+
+/**
+ * Creates simple logger
+ */
+fun <T> loggerFor(clazz: Class<T>) = Logger.getLogger(clazz.canonicalName)

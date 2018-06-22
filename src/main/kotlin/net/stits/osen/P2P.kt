@@ -49,7 +49,7 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
 
         scanner.matchClassesWithAnnotation(P2PController::class.java) { controller ->
             val messageTopic = controller.getAnnotation(P2PController::class.java).topic
-            println("Found P2P controller: ${controller.canonicalName} (topic: $messageTopic)")
+            logger.info("Found P2P controller: ${controller.canonicalName} (topic: $messageTopic)")
 
             val onMethods = controller.methods.filter { method -> method.isAnnotationPresent(On::class.java) }
             val listeners = hashMapOf<String, Method>()
@@ -58,9 +58,9 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
                 val messageType = method.getAnnotation(On::class.java).type
                 val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
 
-                println("\tFound @On annotated method: ${method.name} (type: $messageType)")
+                logger.info("\tFound @On annotated method: ${method.name} (type: $messageType)")
                 if (methodArgs.isNotEmpty())
-                    println("\t - Parameters: ${methodArgs.joinToString(", ")}")
+                    logger.info("\t - Parameters: ${methodArgs.joinToString(", ")}")
 
                 listeners[messageType] = method
             }
@@ -71,7 +71,7 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
 
         scanner.scan()
 
-        println("Handlers parsed successfully, initializing network...")
+        logger.info("Handlers parsed successfully, initializing network...")
 
         initNetwork()
     }
@@ -86,39 +86,39 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
             serverSocket.receive(packet)
 
             val recipient = Address(packet.address.hostAddress, packet.port)
-            println("Got connection from: $recipient") // TODO: change to logger
+            logger.info("Got connection from: $recipient") // TODO: change to logger
 
             val pkg = readPackage(packet)
 
             if (pkg == null) {
-                println("Received an empty package")
+                logger.warning("Received an empty package")
                 continue
             }
 
-            println("Read $pkg from $recipient")
+            logger.info("Read $pkg from $recipient")
 
             val actualRecipient = Address(recipient.host, pkg.metadata.port)
-            println("$recipient is actually $actualRecipient")
+            logger.info("$recipient is actually $actualRecipient")
 
             val topic = pkg.message.topic
             val type = pkg.message.type
 
             val topicHandler = topicHandlers[topic]
             if (topicHandler == null) {
-                println("No controller for topic $topic, skipping...")
+                logger.warning("No controller for topic $topic, skipping...")
                 continue
             }
 
             val messageHandler = topicHandler.listeners[type]
             if (messageHandler == null) {
-                println("No method to handle message type $type of topic $topic, skipping...")
+                logger.warning("No method to handle message type $type of topic $topic, skipping...")
             }
 
             messageHandler!!
 
             val arguments = hashMapOf<Int, Any?>()
             if (messageHandler.parameters.size > 2) {
-                println("Method ${messageHandler.name} of class ${topicHandler.controller} has more then 2 arguments, skipping...")
+                logger.warning("Method ${messageHandler.name} of class ${topicHandler.controller} has more then 2 arguments, skipping...")
                 continue
             }
 
@@ -151,6 +151,7 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
 
     companion object {
         private val clientSocket = DatagramSocket()
+        val logger = loggerFor(Message::class.java)
 
         /**
          * Static function that is used to send messages to other peers
@@ -165,7 +166,7 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
             val pkg = Package(message.serialize(), metadata)
             writePackage(pkg, recipient, maxPacketSizeBytes)
 
-            println("Sent $pkg to $recipient")
+            logger.info("Sent $pkg to $recipient")
         }
 
         private fun writePackage(pkg: Package, recipient: Address, maxPacketSizeBytes: Int) {
@@ -176,7 +177,8 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
                 throw RuntimeException("Unable to send packages with size more than $maxPacketSizeBytes")
 
             val packet = DatagramPacket(serializedPkg, serializedPkg.size, recipient.getInetAddress(), recipient.port)
-            println("Sending: ${packet.data.toString(StandardCharsets.UTF_8)}")
+            logger.info("Sending: ${packet.data.toString(StandardCharsets.UTF_8)}")
+
             clientSocket.send(packet)
         }
     }
