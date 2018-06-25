@@ -19,7 +19,7 @@ data class PackageMetadata(val port: Int)
 /**
  * Just a wrapper around InetAddress
  */
-open class Address(val host: String, val port: Int) {
+data class Address(val host: String, val port: Int) {
     fun getInetAddress(): InetAddress {
         return InetAddress.getByName(host)
     }
