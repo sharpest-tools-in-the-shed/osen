@@ -1,18 +1,15 @@
 package net.stits.osen
 
-import net.stits.osen.controller.PingPayload
-import net.stits.osen.controller.TOPIC_TEST
-import net.stits.osen.controller.TestMessageTypes
-import kotlin.concurrent.thread
+import org.springframework.boot.SpringApplication
+import org.springframework.boot.autoconfigure.SpringBootApplication
+
+
+@SpringBootApplication
+open class Application
+
 
 fun main(args: Array<String>) {
     drawBanner()
 
-    thread {
-        P2P(listeningPort = 1337, packageToScan = "net.stits.osen.controller")
-    }
-
-    val addr = Address("localhost", 1337)
-    val message = Message(TOPIC_TEST, TestMessageTypes.PING, PingPayload())
-    P2P.send(addr, message, 1337)
+    SpringApplication.run(Application::class.java, *args)
 }

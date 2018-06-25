@@ -2,10 +2,19 @@ package net.stits.osen
 
 import io.github.lukehutch.fastclasspathscanner.FastClasspathScanner
 import kotlinx.coroutines.experimental.launch
+import org.springframework.beans.factory.config.BeanDefinition.SCOPE_SINGLETON
+import org.springframework.beans.factory.support.BeanDefinitionRegistry
+import org.springframework.beans.factory.support.GenericBeanDefinition
+import org.springframework.context.ApplicationContext
+import org.springframework.context.ApplicationContextAware
+import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
+import org.springframework.core.type.filter.AnnotationTypeFilter
+import org.springframework.stereotype.Component
 import java.lang.reflect.Method
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.nio.charset.StandardCharsets
+import javax.annotation.PostConstruct
 
 /**
  * Mapping [Message topic -> Controller that handles this topic]
@@ -38,19 +47,78 @@ data class TopicController(val controller: Any, val listeners: HashMap<String, M
  * @param packageToScan {String} if you have multiple networks with different controllers for each, place them in
  * different packages and specify package for each network
  */
-class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 1024, packageToScan: String? = null) {
+@Component
+class P2P(private val listeningPort: Int = 1337, private val maxPacketSizeBytes: Int = 1024, private val packageToScan: String? = null): ApplicationContextAware {
     private val topicHandlers: TopicHandlers = hashMapOf()
+    private var applicationContext: ApplicationContext? = null
 
-    init {
+    @PostConstruct
+    fun initBySpring() {
+        val provider = ClassPathScanningCandidateComponentProvider(false)
+        provider.addIncludeFilter(AnnotationTypeFilter(P2PController::class.java))
+
+        val beanDefinitions = provider.findCandidateComponents("net.stits")
+        beanDefinitions.forEach { beanDefinition ->
+
+            val beanClass = Class.forName(beanDefinition.beanClassName)
+
+            val registry = applicationContext!!.autowireCapableBeanFactory as BeanDefinitionRegistry
+
+            val newBeanDefinition = GenericBeanDefinition()
+            newBeanDefinition.beanClass = beanClass
+            newBeanDefinition.scope = SCOPE_SINGLETON
+
+            registry.registerBeanDefinition(beanClass.canonicalName, newBeanDefinition)
+
+            // finding the @P2PControllers
+            val messageTopic = beanClass.getAnnotation(P2PController::class.java).topic
+            logger.info("Found P2P controller: ${beanClass.canonicalName} (topic: $messageTopic)")
+
+            // finding @On methods
+            val onMethods = beanClass.methods.filter { method -> method.isAnnotationPresent(On::class.java) }
+            val listeners = hashMapOf<String, Method>()
+
+            onMethods.forEach { method ->
+                val messageType = method.getAnnotation(On::class.java).type
+                val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
+
+                logger.info("\tFound @On annotated method: ${method.name} (type: $messageType)")
+                if (methodArgs.isNotEmpty())
+                    logger.info("\t - Parameters: ${methodArgs.joinToString(", ")}")
+
+                listeners[messageType] = method
+            }
+
+            // instantiating @P2PControllers
+            val beanInstance = applicationContext!!.getBean(beanClass)
+            val topicController = TopicController(beanInstance, listeners)
+            topicHandlers[messageTopic] = topicController
+        }
+
+        logger.info("Handlers parsed successfully, initializing network...")
+
+        initNetwork()
+    }
+
+    override fun setApplicationContext(applicationContext: ApplicationContext?) {
+        if (applicationContext == null)
+            throw IllegalArgumentException("Application context can't be null")
+
+        this.applicationContext = applicationContext
+    }
+
+    fun initBySelf() {
         val scanner: FastClasspathScanner = if (packageToScan == null)
             FastClasspathScanner()
         else
             FastClasspathScanner(packageToScan)
 
         scanner.matchClassesWithAnnotation(P2PController::class.java) { controller ->
+            // finding the @P2PControllers
             val messageTopic = controller.getAnnotation(P2PController::class.java).topic
             logger.info("Found P2P controller: ${controller.canonicalName} (topic: $messageTopic)")
 
+            // finding @On methods
             val onMethods = controller.methods.filter { method -> method.isAnnotationPresent(On::class.java) }
             val listeners = hashMapOf<String, Method>()
 
@@ -65,6 +133,7 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
                 listeners[messageType] = method
             }
 
+            // instantiating @P2PControllers
             val topicController = TopicController(controller.newInstance(), listeners)
             topicHandlers[messageTopic] = topicController
         }
@@ -137,7 +206,7 @@ class P2P(private val listeningPort: Int, private val maxPacketSizeBytes: Int = 
 
             launch {
                 when (arguments.size) {
-                    0 -> messageHandler.invoke(topicHandler.controller)
+                    0 -> messageHandler.invoke(topicHandler.controller, arguments)
                     1 -> messageHandler.invoke(topicHandler.controller, arguments[0])
                     2 -> messageHandler.invoke(topicHandler.controller, arguments[0], arguments[1])
                 }
