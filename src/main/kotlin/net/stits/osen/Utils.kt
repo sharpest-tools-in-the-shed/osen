@@ -19,7 +19,7 @@ data class PackageMetadata(val port: Int)
 /**
  * Just a wrapper around InetAddress
  */
-data class Address(val host: String, val port: Int) {
+open class Address(val host: String, val port: Int) {
     fun getInetAddress(): InetAddress {
         return InetAddress.getByName(host)
     }
@@ -38,7 +38,7 @@ data class Address(val host: String, val port: Int) {
  * @param payload {Any?} any payload you want to send (if null - no payload will be sent). It would be nice to create
  * data class for each payload type you send. If remote peer has mismatched payload parameter in its @On method it will throw JsonParseException.
  */
-data class Message(val topic: String, val type: String, val payload: Any?) {
+data class Message(val topic: String, val type: String, val payload: Any? = null) {
     private val mapper = ObjectMapper().registerModule(KotlinModule())
 
     companion object {
