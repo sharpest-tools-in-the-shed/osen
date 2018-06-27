@@ -1,6 +1,8 @@
 package net.stits.osen.controller
 
 import net.stits.osen.*
+import org.springframework.stereotype.Service
+import javax.annotation.PostConstruct
 
 
 const val TOPIC_TEST = "TEST"
@@ -11,8 +13,18 @@ object TestMessageTypes {
 
 data class PingPayload(val text: String = "test")
 
+/**
+ * Example controller
+ *
+ * You can autowire everything spring allows to autowire
+ */
 @P2PController(TOPIC_TEST)
-class ExampleController {
+class ExampleController(private val service: ExampleService) {
+
+    @PostConstruct
+    fun checkIfAutowireWorks() {
+        service.doSomething()
+    }
 
     /**
      * You can write handlers in any way you like:
@@ -34,5 +46,12 @@ class ExampleController {
     @On(TestMessageTypes.PONG)
     fun handlePong(payload: String, sender: Address) {
         println("RECEIVED PONG REQUEST WITH PAYLOAD $payload - THAT HOST IS ALIVE")
+    }
+}
+
+@Service
+class ExampleService {
+    fun doSomething() {
+        println("I did something")
     }
 }

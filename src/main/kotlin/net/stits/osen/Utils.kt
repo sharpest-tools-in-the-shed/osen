@@ -161,22 +161,6 @@ class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
 }
 
 /**
- * Draws an amazing banner
- */
-fun drawBanner() {
-    println(
-                    "#######  #####  ####### #     # \n" +
-                    "#     # #     # #       ##    # \n" +
-                    "#     # #       #       # #   # \n" +
-                    "#     #  #####  #####   #  #  # \n" +
-                    "#     #       # #       #   # # \n" +
-                    "#     # #     # #       #    ## \n" +
-                    "#######  #####  ####### #     # \n" +
-                    "--- P2P messaging framework --- \n"
-    )
-}
-
-/**
  * Creates simple logger
  */
 fun <T> loggerFor(clazz: Class<T>) = Logger.getLogger(clazz.canonicalName)

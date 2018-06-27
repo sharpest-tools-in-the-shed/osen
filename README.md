@@ -1,10 +1,6 @@
-
-_It's very like Spring but Osen._
-
-## OSEN - Kotlin P2P messaging made easy
-Library to send some UDP-messages and easily process ingoing ones. Implement multiple network protocols in one application
-in rapid way.
-Zero-dependency (actually has only two: jackson and lightweight classpath scanner)
+## Spring P2P extension
+This extension enables you to write applications which can exchange UDP messages in springmvc-way.
+Zero-dependency (actually has only three: kotlin-coroutines, spring-context and jackson)
 
 #### By example
 Let's suppose you need to implement some very heavy protocol called Example Protocol.
@@ -33,7 +29,7 @@ class ExampleController {
 }
 ```
 
-Yes, just like in Spring. Then somewhere in code, when you need to send a ping to someone, drop:
+Yes, just like in SpringMVC. Then somewhere in code, when you need to send a ping to someone, drop:
 ```
 val receiver = Address(RECEIVER_HOST_ACCUIRED_SOMEWAY, PORT_RECEIVER_IS_LISTENING_TO)
 val message = Message("EXAMPLE", "PING")
@@ -41,10 +37,22 @@ val message = Message("EXAMPLE", "PING")
 P2P.send(receiver, message, SOME_PORT_WE_ARE_LISTENING_TO) // static function
 ```
 
-Then in program entrypoint (or in some spring component with @PostConstruct, or somewhere where code is actually executes):
+Then define spring bean and start spring app
 ```
-    // thread { P2P(listeningPort = SOME_PORT_WE_ARE_LISTENING_TO) }
-    P2P(listeningPort = SOME_PORT_WE_ARE_LISTENING_TO)
+    @SpringBootApplication
+    open class Application {
+        private val port = 1337
+        private val packageToScan = "net.stits"
+    
+        @Bean
+        open fun p2pInitializer(): P2P {
+            return P2P(listeningPort = port, packageToScan = packageToScan)
+        }
+    }
+    
+    fun main(args: Array<String>) {
+        SpringApplication.run(Application::class.java, *args)
+    }
 ```
 
 __OMG THAT IS SO NICE WOW__
@@ -80,4 +88,6 @@ val message = Message("EXAMPLE", "PING", PingPayload("Hello")
 P2P.send(receiver, message, SOME_PORT_WE_ARE_LISTENING_TO)
 ```
 
-Example is in the test package. Technical details are in javadocs. Good luck.
+And ofc you can autowire everything in your p2p-controller.
+
+Examples are in the test package. Technical details are in javadocs. Good luck.

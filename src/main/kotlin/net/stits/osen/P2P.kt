@@ -1,6 +1,5 @@
 package net.stits.osen
 
-import io.github.lukehutch.fastclasspathscanner.FastClasspathScanner
 import kotlinx.coroutines.experimental.launch
 import org.springframework.beans.factory.config.BeanDefinition.SCOPE_SINGLETON
 import org.springframework.beans.factory.support.BeanDefinitionRegistry
@@ -9,12 +8,13 @@ import org.springframework.context.ApplicationContext
 import org.springframework.context.ApplicationContextAware
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
 import org.springframework.core.type.filter.AnnotationTypeFilter
-import org.springframework.stereotype.Component
 import java.lang.reflect.Method
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.nio.charset.StandardCharsets
 import javax.annotation.PostConstruct
+import kotlin.concurrent.thread
+
 
 /**
  * Mapping [Message topic -> Controller that handles this topic]
@@ -34,21 +34,18 @@ typealias TopicHandlers = HashMap<String, TopicController>
 data class TopicController(val controller: Any, val listeners: HashMap<String, Method>)
 
 /**
- * Composite object that do all the stuff.
  * On construction it scans all packages (or package you pass to it) and finds classes annotated with @P2PController,
- * then it instantiates that controller and finds all methods of this class with @On annotation and saves this information.
- * Then it starts UDP-server (handle thread separation by yourself) on specified port (u can start many of it in test purposes)
- * and listens to packets.
+ * adds them to Spring Context, then it finds all methods of this class with @On annotation and saves this information.
+ * Then it starts UDP-server on specified port (u can start many of it in test purposes) and listens for packets.
  * Every packet is transformed (bytes -> json) into net.stits.osen.Package object that contains net.stits.osen.Message
  * object that contains Topic and Type which are used to determine what controller method should be invoked.
  *
- * @param listeningPort {Int} port to listen to UPD-packets
- * @param maxPacketSizeBytes {Int} maximum size of packet // ignored for now
- * @param packageToScan {String} if you have multiple networks with different controllers for each, place them in
- * different packages and specify package for each network
+ * @param packageToScan {String} you should specify this in order to say Spring classpath scanner where do
+ * your @P2PControllers placed // TODO: spring by itself scans packages without this somehow
+ * @param listeningPort {Int} port to listen for UPD-packets
+ * @param maxPacketSizeBytes {Int} maximum size of packet // TODO: make this work or remove
  */
-@Component
-class P2P(private val listeningPort: Int = 1337, private val maxPacketSizeBytes: Int = 1024, private val packageToScan: String? = null): ApplicationContextAware {
+class P2P(private val packageToScan: String, private val listeningPort: Int = 1337, private val maxPacketSizeBytes: Int = 1024): ApplicationContextAware {
     private val topicHandlers: TopicHandlers = hashMapOf()
     private var applicationContext: ApplicationContext? = null
 
@@ -60,8 +57,8 @@ class P2P(private val listeningPort: Int = 1337, private val maxPacketSizeBytes:
         val beanDefinitions = provider.findCandidateComponents("net.stits")
         beanDefinitions.forEach { beanDefinition ->
 
+            // adding found @P2PControllers to spring context
             val beanClass = Class.forName(beanDefinition.beanClassName)
-
             val registry = applicationContext!!.autowireCapableBeanFactory as BeanDefinitionRegistry
 
             val newBeanDefinition = GenericBeanDefinition()
@@ -70,7 +67,7 @@ class P2P(private val listeningPort: Int = 1337, private val maxPacketSizeBytes:
 
             registry.registerBeanDefinition(beanClass.canonicalName, newBeanDefinition)
 
-            // finding the @P2PControllers
+            // getting topic name
             val messageTopic = beanClass.getAnnotation(P2PController::class.java).topic
             logger.info("Found P2P controller: ${beanClass.canonicalName} (topic: $messageTopic)")
 
@@ -89,15 +86,17 @@ class P2P(private val listeningPort: Int = 1337, private val maxPacketSizeBytes:
                 listeners[messageType] = method
             }
 
-            // instantiating @P2PControllers
+            // adding instances of @P2PControllers to list of topic handlers
             val beanInstance = applicationContext!!.getBean(beanClass)
             val topicController = TopicController(beanInstance, listeners)
             topicHandlers[messageTopic] = topicController
         }
 
-        logger.info("Handlers parsed successfully, initializing network...")
+        logger.info("Spring P2P extension successfully initialized, starting network up...")
 
-        initNetwork()
+        thread {
+            initNetwork()
+        }
     }
 
     override fun setApplicationContext(applicationContext: ApplicationContext?) {
@@ -107,55 +106,17 @@ class P2P(private val listeningPort: Int = 1337, private val maxPacketSizeBytes:
         this.applicationContext = applicationContext
     }
 
-    fun initBySelf() {
-        val scanner: FastClasspathScanner = if (packageToScan == null)
-            FastClasspathScanner()
-        else
-            FastClasspathScanner(packageToScan)
-
-        scanner.matchClassesWithAnnotation(P2PController::class.java) { controller ->
-            // finding the @P2PControllers
-            val messageTopic = controller.getAnnotation(P2PController::class.java).topic
-            logger.info("Found P2P controller: ${controller.canonicalName} (topic: $messageTopic)")
-
-            // finding @On methods
-            val onMethods = controller.methods.filter { method -> method.isAnnotationPresent(On::class.java) }
-            val listeners = hashMapOf<String, Method>()
-
-            onMethods.forEach { method ->
-                val messageType = method.getAnnotation(On::class.java).type
-                val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
-
-                logger.info("\tFound @On annotated method: ${method.name} (type: $messageType)")
-                if (methodArgs.isNotEmpty())
-                    logger.info("\t - Parameters: ${methodArgs.joinToString(", ")}")
-
-                listeners[messageType] = method
-            }
-
-            // instantiating @P2PControllers
-            val topicController = TopicController(controller.newInstance(), listeners)
-            topicHandlers[messageTopic] = topicController
-        }
-
-        scanner.scan()
-
-        logger.info("Handlers parsed successfully, initializing network...")
-
-        initNetwork()
-    }
-
     private fun initNetwork() {
         val serverSocket = DatagramSocket(listeningPort)
         val packet = DatagramPacket(ByteArray(maxPacketSizeBytes), maxPacketSizeBytes)
 
-        println("Listening on $listeningPort") // TODO: change to logger
+        logger.info("Listening to UDP packets on port: $listeningPort")
 
         while (true) {
             serverSocket.receive(packet)
 
             val recipient = Address(packet.address.hostAddress, packet.port)
-            logger.info("Got connection from: $recipient") // TODO: change to logger
+            logger.info("Got connection from: $recipient")
 
             val pkg = readPackage(packet)
 
@@ -181,36 +142,28 @@ class P2P(private val listeningPort: Int = 1337, private val maxPacketSizeBytes:
             val messageHandler = topicHandler.listeners[type]
             if (messageHandler == null) {
                 logger.warning("No method to handle message type $type of topic $topic, skipping...")
+                continue
             }
 
-            messageHandler!!
-
-            val arguments = hashMapOf<Int, Any?>()
             if (messageHandler.parameters.size > 2) {
                 logger.warning("Method ${messageHandler.name} of class ${topicHandler.controller} has more then 2 arguments, skipping...")
                 continue
             }
 
-            // detecting the right parameter order
-            messageHandler.parameters
-                    .forEachIndexed { index, parameter ->
-                        if (Address::class.java.isAssignableFrom(parameter.type))
-                            arguments[index] = actualRecipient
-                        else {
-                            if (pkg.message.payload.isEmpty())
-                                arguments[index] = null
-                            else
-                                arguments[index] = pkg.message.deserialize(parameter.type).payload
-                        }
-                    }
+            val arguments = Array(messageHandler.parameters.size) { index ->
+                val parameter = messageHandler.parameters[index]
 
-            launch {
-                when (arguments.size) {
-                    0 -> messageHandler.invoke(topicHandler.controller, arguments)
-                    1 -> messageHandler.invoke(topicHandler.controller, arguments[0])
-                    2 -> messageHandler.invoke(topicHandler.controller, arguments[0], arguments[1])
+                if (Address::class.java.isAssignableFrom(parameter.type))
+                    actualRecipient
+                else {
+                    if (pkg.message.payload.isEmpty())
+                        null
+                    else
+                        pkg.message.deserialize(parameter.type).payload
                 }
             }
+
+            launch { messageHandler.invoke(topicHandler.controller, *arguments) }
         }
     }
 
