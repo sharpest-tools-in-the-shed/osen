@@ -1,3 +1,5 @@
+// TODO: update readme
+
 ## Spring P2P extension
 This extension enables you to write applications which can exchange UDP messages in springmvc-way.
 Zero-dependency (actually has only three: kotlin-coroutines, spring-context and jackson)
@@ -10,7 +12,7 @@ The flow is also very complicated and heavy: every peer that receives Ping shoul
 Okay. Here we go.
 Define controller and handle message types.
 
-```
+```kotlin
 @P2PController("EXAMPLE")
 class ExampleController {
     @On("PING")
@@ -30,7 +32,7 @@ class ExampleController {
 ```
 
 Yes, just like in SpringMVC. Then somewhere in code, when you need to send a ping to someone, drop:
-```
+```kotlin
 val receiver = Address(RECEIVER_HOST_ACCUIRED_SOMEWAY, PORT_RECEIVER_IS_LISTENING_TO)
 val message = Message("EXAMPLE", "PING")
 
@@ -38,7 +40,7 @@ P2P.send(receiver, message, SOME_PORT_WE_ARE_LISTENING_TO) // static function
 ```
 
 Then define spring bean and start spring app
-```
+```kotlin
     @SpringBootApplication
     open class Application {
         private val port = 1337
@@ -58,7 +60,7 @@ Then define spring bean and start spring app
 __OMG THAT IS SO NICE WOW__
 
 Wanna send some payload? Okay.
-```
+```kotlin
 @P2PController("EXAMPLE")
 class ExampleController {
     @On("PING")
@@ -81,7 +83,7 @@ data class PongPayload(val pongText: String = "test")
 ```
 
 Then somewhere:
-```
+```kotlin
 val receiver = Address(RECEIVER_HOST_ACCUIRED_SOMEWAY, PORT_RECEIVER_IS_LISTENING_TO)
 val message = Message("EXAMPLE", "PING", PingPayload("Hello")
 

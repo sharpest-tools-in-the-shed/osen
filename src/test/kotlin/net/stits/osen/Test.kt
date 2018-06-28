@@ -10,16 +10,53 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner
 
 
 @RunWith(SpringJUnit4ClassRunner::class)
-//@ContextConfiguration(classes = [SecondApplication::class])
 @SpringBootTest
 class Test {
+    private val receiver = Address("localhost", 1337)
 
     @Test
-    fun doTest() {
-        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_REQ, TestPayload())
-        val receiver = Address("localhost", 1337)
+    fun `test single request and response`() {
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_REQUEST, TestPayload())
         val response = P2P.send(receiver, message, 1337, _class = String::class.java)
 
-        println("Got response: $response omg!")
+        assert(response == "Test string payload") { "send() returned invalid response" }
     }
+
+    @Test
+    fun `test null payload`() {
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_NULL_PAYLOAD_REQ, null)
+        val response = P2P.send(receiver, message, 1337, _class = Any::class.java)
+
+        assert(response == null) { "send() returned not null response" }
+    }
+
+    @Test
+    fun `test multiple requests`() {
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_MULTIPLE_REQUESTS, "some payload")
+
+        repeat(200) {
+            val response = P2P.send(receiver, message, 1337, _class = String::class.java)
+            assert(response == "some payload")
+        }
+    }
+
+    @Test
+    fun `test no return value on response`() {
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_NO_RETURN_TYPE_ON_RESPONSE_REQ, "test")
+        val v = P2P.send(receiver, message, 1337, _class = String::class.java)
+
+        assert(v == null)
+    }
+}
+
+fun assertThrows(code: () -> Unit) {
+    var threw = false
+
+    try {
+        code()
+    } catch (e: Exception) {
+        threw = true
+    }
+
+    assert(threw)
 }

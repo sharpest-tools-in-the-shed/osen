@@ -16,7 +16,6 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.nio.charset.StandardCharsets
 import java.util.*
-import java.util.concurrent.ConcurrentHashMap
 import javax.annotation.PostConstruct
 import kotlin.concurrent.thread
 
@@ -26,8 +25,6 @@ import kotlin.concurrent.thread
  */
 typealias TopicHandlers = HashMap<String, TopicController>
 
-typealias AnnotationPropertyExtractor = (method: Method, annotation: Class<out Annotation>) -> String
-
 /**
  * Object containing controller and mapping [Message type -> Method that handles this message type]
  * Only one handler per unique together Topic and Type is possible right now.
@@ -36,14 +33,14 @@ typealias AnnotationPropertyExtractor = (method: Method, annotation: Class<out A
  * TODO: maybe add support for multiple handlers per topic-type
  *
  * @param controller {Any} @P2PController-annotated instance
- * @param listeners {String -> Method} mapping [MessageType -> @OnRequest method]
+ * @param listeners {String -> Method} mapping [MessageType -> @On method]
  */
 data class TopicController(val controller: Any, val listeners: Map<String, Method>)
 
 /**
  * On construction it scans all packages (or package you pass to it) and finds classes annotated with @P2PController,
  * adds them to Spring Context, then it finds all methods of this class with @On annotation and saves this information.
- * Then it starts UDP-server on specified port (u can start many of it in test purposes) and listens for packets.
+ * Then it starts UDP-server on specified port and listens for packets.
  * Every packet is transformed (bytes -> json) into net.stits.osen.Package object that contains net.stits.osen.Message
  * object that contains Topic and Type which are used to determine what controller method should be invoked.
  *
@@ -52,17 +49,27 @@ data class TopicController(val controller: Any, val listeners: Map<String, Metho
  * @param listeningPort {Int} port to listen for UPD-packets
  * @param maxPacketSizeBytes {Int} maximum size of packet // TODO: make this work or remove
  */
-class P2P(private val packageToScan: String, private val listeningPort: Int, private val maxPacketSizeBytes: Int = 1024) : ApplicationContextAware {
+class P2P(private val listeningPort: Int, private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) : ApplicationContextAware {
     private val topicHandlers: TopicHandlers = hashMapOf()
 
-    val responses = ConcurrentHashMap<Int, Any?>()
+    /**
+     * This map is used to store responses. After "send" with specified _class invoked it is watching this map for a
+     * response (session id is used as key) and returns it when response arrives.
+     *
+     * TODO: maybe make concurrent
+     */
+    val responses = hashMapOf<Int, Any?>()
 
+    /**
+     * This method is invoked by Spring itself. It scans through specified package, finds all needed classes and methods
+     * and then initializes network
+     */
     @PostConstruct
     fun initBySpring() {
         val provider = ClassPathScanningCandidateComponentProvider(false)
         provider.addIncludeFilter(AnnotationTypeFilter(P2PController::class.java))
 
-        val beanDefinitions = provider.findCandidateComponents("net.stits")
+        val beanDefinitions = provider.findCandidateComponents(packageToScan)
         beanDefinitions.forEach { beanDefinition ->
 
             // adding found @P2PControllers to spring context
@@ -271,7 +278,6 @@ class P2P(private val packageToScan: String, private val listeningPort: Int, pri
                 val p2p = getP2PBeanFromContext()
 
                 val session = Session.createSession()
-                p2p.responses[session.id] = null
 
                 val pkg = sendMessage(recipient, message, listeningPort, session)
                 logger.info("Sent $pkg to $recipient, waiting for response...")
@@ -279,9 +285,9 @@ class P2P(private val packageToScan: String, private val listeningPort: Int, pri
                 val delay = 5
                 val response = withTimeoutOrNull(timeout) {
                     repeat(timeout.div(delay).toInt()) {
-                        val response = p2p.responses[session.id]
+                        if (p2p.responses.containsKey(session.id)) {
+                            val response = p2p.responses[session.id]
 
-                        if (response != null) {
                             logger.info("Received response: $response")
                             return@withTimeoutOrNull response
                         } else {

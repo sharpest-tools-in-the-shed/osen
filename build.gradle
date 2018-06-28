@@ -16,7 +16,7 @@ buildscript {
 }
 
 group 'net.sharpest-tools-in-the-shed'
-version '0.3.0'
+version '0.3.1'
 
 apply plugin: 'kotlin'
 
