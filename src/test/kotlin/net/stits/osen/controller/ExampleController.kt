@@ -7,11 +7,10 @@ import javax.annotation.PostConstruct
 
 const val TOPIC_TEST = "TEST"
 object TestMessageTypes {
-    const val PING = "PING"
-    const val PONG = "PONG"
+    const val TEST = "TEST"
 }
 
-data class PingPayload(val text: String = "test")
+data class TestPayload(val text: String = "test")
 
 /**
  * Example controller
@@ -28,24 +27,25 @@ class ExampleController(private val service: ExampleService) {
 
     /**
      * You can write handlers in any way you like:
-     *      handlePing()
-     *      handlePing(a: PingPayload)
-     *      handlePing(b: Address)
-     *      handlePing(x: PingPayload, y: Address)
-     *      handlePing(sender: Address, payload: PingPayload)
+     *      handleTestRequest()
+     *      handleTestRequest(a: TestPayload)
+     *      handleTestRequest(b: Address)
+     *      handleTestRequest(x: TestPayload, y: Address)
+     *      handleTestRequest(sender: Address, payload: TestPayload)
      * just make sure you passing to it no more than 2 parameters, and sender is always Address (payload can be Any?)
      */
-    @On(TestMessageTypes.PING)
-    fun handlePing(payload: PingPayload, sender: Address) {
-        println("RECEIVED PING REQUEST WITH PAYLOAD $payload, SENDING PONG BACK...")
+    @OnRequest(TestMessageTypes.TEST)
+    fun handleTestRequest(payload: TestPayload, sender: Address, session: Session) {
+        println("RECEIVED TEST REQUEST WITH PAYLOAD $payload, SENDING TEST RESPONSE BACK...")
 
-        val message = Message(TOPIC_TEST, TestMessageTypes.PONG, "Pong string payload")
-        P2P.send(sender, message, 1337)
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST, "Test string payload")
+        P2P.sendResponse(sender, message, 1337, session)
     }
 
-    @On(TestMessageTypes.PONG)
-    fun handlePong(payload: String, sender: Address) {
+    @OnResponse(TestMessageTypes.TEST)
+    fun handleTestResponse(payload: String, sender: Address): String {
         println("RECEIVED PONG REQUEST WITH PAYLOAD $payload - THAT HOST IS ALIVE")
+        return payload
     }
 }
 

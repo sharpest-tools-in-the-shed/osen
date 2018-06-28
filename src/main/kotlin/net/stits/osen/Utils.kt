@@ -11,10 +11,12 @@ import java.util.*
 import java.util.logging.Logger
 
 
+data class Session(val id: Int)
+
 /**
  * For now it's just a port on which we are listening to (so remote peer can send us messages too) but maybe sometime here will be more
  */
-data class PackageMetadata(val port: Int)
+data class PackageMetadata(val port: Int, val session: Session? = null)
 
 /**
  * Just a wrapper around InetAddress
@@ -50,13 +52,7 @@ data class Message(val topic: String, val type: String, val payload: Any? = null
      * manually serialize it to ByteArray and then manually deserialize in needed type.
      */
     fun serialize(): SerializedMessage {
-        var serializedPayload: ByteArray? = null
-
-        try {
-            serializedPayload = mapper.writeValueAsBytes(payload)
-        } catch (e: JsonParseException) {
-            logger.warning("Unable to serialize payload: $payload} for message: $this")
-        }
+        var serializedPayload = mapper.writeValueAsBytes(payload)
 
         if (serializedPayload == null)
             serializedPayload = ByteArray(0)
@@ -80,14 +76,9 @@ data class SerializedMessage(val topic: String, val type: String, val payload: B
      *
      * @param clazz {Class<T>} class to deserialize
      */
-    fun <T> deserialize(clazz: Class<T>): Message {
-        var deserializedPayload: T? = null
-
-        try {
-            deserializedPayload = mapper.readValue(payload, clazz)
-        } catch (e: JsonParseException) {
-            logger.warning("Unable to deserialize payload: $payload for message: $this")
-        }
+    fun <T> deserialize(clazz: Class<T>): Message? {
+        logger.info("Deserializing payload $payload to type ${clazz.canonicalName}")
+        val deserializedPayload = mapper.readValue(payload, clazz)
 
         return Message(topic, type, deserializedPayload)
     }
