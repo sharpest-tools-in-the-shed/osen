@@ -11,12 +11,58 @@ import java.util.*
 import java.util.logging.Logger
 
 
-data class Session(val id: Int)
+object SessionStage {
+    const val REQUEST = "REQUEST"
+    const val RESPONSE = "RESPONSE"
+    const val CONSUMED = "CONSUMED"
+    const val INACTIVE = "INACTIVE"
+
+    fun next(stage: String): String {
+        return when (stage) {
+            REQUEST -> RESPONSE
+            RESPONSE -> CONSUMED
+            CONSUMED -> CONSUMED
+            else -> INACTIVE
+        }
+    }
+}
+
+data class Session(val id: Int, private var stage: String = SessionStage.REQUEST) {
+    fun processLifecycle() {
+        if (stage == SessionStage.CONSUMED)
+            throw IllegalStateException("Session $id is expired. Unable to switch stage.")
+
+        if (stage == SessionStage.INACTIVE)
+            throw IllegalStateException("Unable to process inactive stage of session $id")
+
+        stage = SessionStage.next(stage)
+    }
+
+    fun getStage(): String {
+        return stage
+    }
+
+    private fun setInactiveStage() {
+        stage = SessionStage.INACTIVE
+    }
+
+    companion object {
+        fun createSession(): Session {
+            return Session(Random().nextInt(Int.MAX_VALUE))
+        }
+
+        fun createInactiveSession(): Session {
+            val session = Session(Random().nextInt(Int.MAX_VALUE))
+            session.setInactiveStage()
+            return session
+        }
+    }
+}
 
 /**
  * For now it's just a port on which we are listening to (so remote peer can send us messages too) but maybe sometime here will be more
  */
-data class PackageMetadata(val port: Int, val session: Session? = null)
+data class PackageMetadata(val port: Int, val session: Session)
 
 /**
  * Just a wrapper around InetAddress

@@ -7,7 +7,8 @@ import javax.annotation.PostConstruct
 
 const val TOPIC_TEST = "TEST"
 object TestMessageTypes {
-    const val TEST = "TEST"
+    const val TEST_REQ = "TEST_REQ"
+    const val TEST_RES = "TEST_RES"
 }
 
 data class TestPayload(val text: String = "test")
@@ -34,15 +35,15 @@ class ExampleController(private val service: ExampleService) {
      *      handleTestRequest(sender: Address, payload: TestPayload)
      * just make sure you passing to it no more than 2 parameters, and sender is always Address (payload can be Any?)
      */
-    @OnRequest(TestMessageTypes.TEST)
+    @On(TestMessageTypes.TEST_REQ)
     fun handleTestRequest(payload: TestPayload, sender: Address, session: Session) {
         println("RECEIVED TEST REQUEST WITH PAYLOAD $payload, SENDING TEST RESPONSE BACK...")
 
-        val message = Message(TOPIC_TEST, TestMessageTypes.TEST, "Test string payload")
-        P2P.sendResponse(sender, message, 1337, session)
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_RES, "Test string payload")
+        P2P.send(recipient = sender, message = message, listeningPort = 1337, _session = session)
     }
 
-    @OnResponse(TestMessageTypes.TEST)
+    @On(TestMessageTypes.TEST_RES)
     fun handleTestResponse(payload: String, sender: Address): String {
         println("RECEIVED PONG REQUEST WITH PAYLOAD $payload - THAT HOST IS ALIVE")
         return payload

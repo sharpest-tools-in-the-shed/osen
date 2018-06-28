@@ -16,7 +16,7 @@ open class FirstApplication {
     }
 }
 
-@SpringBootApplication
+/*@SpringBootApplication
 open class SecondApplication {
     private val port = 1338
     private val packageToScan = "net.stits"
@@ -25,7 +25,7 @@ open class SecondApplication {
     open fun netInitializer(): P2P {
         return P2P(listeningPort = port, packageToScan = packageToScan)
     }
-}
+}*/
 
 fun main(args: Array<String>) {
     SpringApplication.run(FirstApplication::class.java, *args)
