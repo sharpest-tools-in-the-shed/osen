@@ -68,7 +68,7 @@ data class PackageMetadata(val port: Int, val session: Session)
  * Just a wrapper around InetAddress
  */
 data class Address(val host: String, val port: Int) {
-    fun getInetAddress(): InetAddress {
+    fun toInetAddress(): InetAddress {
         return InetAddress.getByName(host)
     }
 }

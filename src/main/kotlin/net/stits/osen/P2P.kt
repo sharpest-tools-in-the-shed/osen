@@ -301,7 +301,7 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
         if (maxPacketSizeBytes < serializedPkg.size)
             throw RuntimeException("Unable to send packages with size more than $maxPacketSizeBytes")
 
-        val packet = DatagramPacket(serializedPkg, serializedPkg.size, recipient.getInetAddress(), recipient.port)
+        val packet = DatagramPacket(serializedPkg, serializedPkg.size, recipient.toInetAddress(), recipient.port)
         logger.info("Sending: ${packet.data.toString(StandardCharsets.UTF_8)}")
 
         clientSocket.send(packet)
