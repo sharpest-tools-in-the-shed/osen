@@ -5,11 +5,8 @@ import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.withTimeoutOrNull
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.beans.factory.config.BeanDefinition.SCOPE_SINGLETON
-import org.springframework.beans.factory.support.BeanDefinitionRegistry
-import org.springframework.beans.factory.support.GenericBeanDefinition
-import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
+import org.springframework.context.support.GenericApplicationContext
 import org.springframework.core.type.filter.AnnotationTypeFilter
 import java.lang.reflect.Method
 import java.net.DatagramPacket
@@ -54,7 +51,7 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
     private val clientSocket = DatagramSocket()
 
     @Autowired
-    lateinit var context: ApplicationContext
+    lateinit var context: GenericApplicationContext
 
     /**
      * This map is used to store responses. After "send" with specified _class invoked it is watching this map for a
@@ -78,13 +75,7 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
 
             // adding found @P2PControllers to spring context
             val beanClass = Class.forName(beanDefinition.beanClassName)
-            val registry = context.autowireCapableBeanFactory as BeanDefinitionRegistry
-
-            val newBeanDefinition = GenericBeanDefinition()
-            newBeanDefinition.beanClass = beanClass
-            newBeanDefinition.scope = SCOPE_SINGLETON
-
-            registry.registerBeanDefinition(beanClass.canonicalName, newBeanDefinition)
+            context.registerBean(beanClass)
 
             // getting topic name
             val messageTopic = beanClass.getAnnotation(P2PController::class.java).topic
