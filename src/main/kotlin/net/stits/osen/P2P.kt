@@ -117,8 +117,6 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
 
     private fun initNetwork() {
         val serverSocket = DatagramSocket(listeningPort)
-        serverSocket.soTimeout = 1000
-
         val packet = DatagramPacket(ByteArray(maxPacketSizeBytes), maxPacketSizeBytes)
 
         logger.info("Listening for UDP packets on port: $listeningPort")
@@ -129,7 +127,12 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
             val recipient = Address(packet.address.hostAddress, packet.port)
             logger.info("Got connection from: $recipient")
 
-            val pkg = readPackage(packet) ?: throw RuntimeException("Received an empty package")
+            val pkg = readPackage(packet)
+
+            if (pkg == null) {
+                logger.warning("Received an empty package")
+                continue
+            }
 
             logger.info("Read $pkg from $recipient")
 
@@ -141,7 +144,11 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
             val session = pkg.metadata.session
 
             val topicHandler = topicHandlers[topic]
-                    ?: throw  RuntimeException("No controller for topic $topic, skipping...")
+
+            if (topicHandler == null) {
+                logger.warning("No controller for topic $topic, skipping...")
+                continue
+            }
 
             handleOnInvocation(topicHandler, topic, type, pkg.message, actualRecipient, session)
         }
