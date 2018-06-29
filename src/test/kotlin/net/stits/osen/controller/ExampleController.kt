@@ -86,8 +86,7 @@ class ExampleController(private val service: TestService) {
     }
 
     @On(TestMessageTypes.TEST_NO_RETURN_TYPE_ON_RESPONSE_RES)
-    fun `test no return type on response res`(payload: String) {
-    }
+    fun `test no return type on response res`(payload: String) {}
 }
 
 @Service

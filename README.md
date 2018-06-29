@@ -1,5 +1,3 @@
-// TODO: update readme
-
 ## Spring P2P extension
 This extension enables you to write applications which can exchange UDP messages in springmvc-way.
 Zero-dependency (actually has only three: kotlin-coroutines, spring-context and jackson)
@@ -64,17 +62,18 @@ Wanna send some payload? Okay.
 @P2PController("EXAMPLE")
 class ExampleController {
     @On("PING")
-    fun handlePing(payload: PingPayload, sender: Address) {
+    fun handlePing(payload: PingPayload, sender: Address, session: Session) { // session is used to say that we sending something in response
         println("RECEIVED PING WITH PAYLOAD $payload, SENDING PONG BACK...")
 
         val message = Message("EXAMPLE", "PONG", PongPayload("Hey"))
-        P2P.send(sender, message, SOME_PORT_WE_ARE_LISTENING_TO)
+        P2P.send(sender, message, SOME_PORT_WE_ARE_LISTENING_TO, session)
         println("SENT PONG IM SUCH A NICE GUY")
     }
 
     @On("PONG")
-    fun handlePong(sender: Address, something: PongPayload) {
+    fun handlePong(sender: Address, something: PongPayload): String {
         println("RECEIVED PONG WITH PAYLOAD $something - THAT HOST IS ALIVE SO SWEET")
+        return something.text
     }
 }
 
@@ -85,9 +84,10 @@ data class PongPayload(val pongText: String = "test")
 Then somewhere:
 ```kotlin
 val receiver = Address(RECEIVER_HOST_ACCUIRED_SOMEWAY, PORT_RECEIVER_IS_LISTENING_TO)
-val message = Message("EXAMPLE", "PING", PingPayload("Hello")
+val message = Message("EXAMPLE", "PING", PingPayload("Hello"))
 
-P2P.send(receiver, message, SOME_PORT_WE_ARE_LISTENING_TO)
+val text = P2P.send(receiver, message, SOME_PORT_WE_ARE_LISTENING_TO)
+println(text) // test
 ```
 
 And ofc you can autowire everything in your p2p-controller.
