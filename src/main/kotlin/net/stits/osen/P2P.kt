@@ -4,11 +4,11 @@ import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.withTimeoutOrNull
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.config.BeanDefinition.SCOPE_SINGLETON
 import org.springframework.beans.factory.support.BeanDefinitionRegistry
 import org.springframework.beans.factory.support.GenericBeanDefinition
 import org.springframework.context.ApplicationContext
-import org.springframework.context.ApplicationContextAware
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
 import org.springframework.core.type.filter.AnnotationTypeFilter
 import java.lang.reflect.Method
@@ -49,8 +49,12 @@ data class TopicController(val controller: Any, val listeners: Map<String, Metho
  * @param listeningPort {Int} port to listen for UPD-packets
  * @param maxPacketSizeBytes {Int} maximum size of packet // TODO: make this work or remove
  */
-class P2P(private val listeningPort: Int, private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) : ApplicationContextAware {
+class P2P(private val listeningPort: Int, private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) {
     private val topicHandlers: TopicHandlers = hashMapOf()
+    private val clientSocket = DatagramSocket()
+
+    @Autowired
+    lateinit var context: ApplicationContext
 
     /**
      * This map is used to store responses. After "send" with specified _class invoked it is watching this map for a
@@ -65,7 +69,7 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
      * and then initializes network
      */
     @PostConstruct
-    fun initBySpring() {
+    private fun initBySpring() {
         val provider = ClassPathScanningCandidateComponentProvider(false)
         provider.addIncludeFilter(AnnotationTypeFilter(P2PController::class.java))
 
@@ -74,7 +78,7 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
 
             // adding found @P2PControllers to spring context
             val beanClass = Class.forName(beanDefinition.beanClassName)
-            val registry = applicationContext!!.autowireCapableBeanFactory as BeanDefinitionRegistry
+            val registry = context.autowireCapableBeanFactory as BeanDefinitionRegistry
 
             val newBeanDefinition = GenericBeanDefinition()
             newBeanDefinition.beanClass = beanClass
@@ -90,7 +94,7 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
             val listeners = getAllAnnotatedMethodsOfBean(beanClass)
 
             // adding instances of @P2PControllers to list of topic handlers
-            val beanInstance = applicationContext!!.getBean(beanClass)
+            val beanInstance = context.getBean(beanClass)
             val topicController = TopicController(beanInstance, listeners)
             topicHandlers[messageTopic] = topicController
         }
@@ -100,13 +104,6 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
         thread {
             initNetwork()
         }
-    }
-
-    override fun setApplicationContext(appContext: ApplicationContext?) {
-        if (appContext == null)
-            throw IllegalArgumentException("Application context can't be null")
-
-        applicationContext = appContext
     }
 
     private fun getAllAnnotatedMethodsOfBean(beanClass: Class<*>): Map<String, Method> {
@@ -212,120 +209,110 @@ class P2P(private val listeningPort: Int, private val packageToScan: String, pri
     }
 
     companion object {
-        private var applicationContext: ApplicationContext? = null
-        private val clientSocket = DatagramSocket()
         val logger = loggerFor(Message::class.java)
+    }
 
-        private const val maxPacketSizeBytes: Int = 1024
-
-        /**
-         * Static function that is used to send messages to other peers
-         * Parameters _class and _session are used to determine whether you requesting or not information from peer
-         * If _class specified, new session will be generated and remote peer can receive it with controller method parameters
-         * then they can send it back along with a message. When we receive our session back, we execute @On method, get
-         * it's return value and return it from here. Little bit complicated (idk how to explain it even to myself, so forgive me).
-         * It helps to keep request processing logic in controllers and use return value everywhere we need.
-         *
-         *
-         * Some scheme, maybe it will help:
-         *
-         * 1. [local machine] send(address, message, port, _class = String::class.java) //blocks after this ->
-         * 2. [remote machine] @On(sender, payload, session) // it's like request handler now ->
-         * 3. [remote machine] send(address, message, port, _session = session) ->
-         * 4. [local machine] @On(sender, payload): String // it's like response handler now ->
-         * 5. [local machine] // send from step 1 unblocks and returns String
-         *
-         *
-         * @param recipient {net.stits.osen.Address} message recipient
-         * @param message {net.stits.osen.Message} message itself
-         * @param listeningPort {Int} port which you listen to so remote peer can send us messages too
-         * @param _class {Class<T>} - specify this if you expect to receive some payload of type T back
-         * @param _session {Session} - specify this if you sending a response (you should have it from @On method parameter)
-         *
-         * @return {Any?} some payload you return from @On method
-         */
-        fun send(recipient: Address, message: Message, listeningPort: Int, _class: Class<out Any?>? = null, _session: Session? = null, timeout: Long = 30000): Any? {
-            if (_class == null) {
-                if (_session != null) {
-                    if (_session.getStage() == SessionStage.CONSUMED) {
-                        throw IllegalArgumentException("Session ${_session.id} is expired.")
-                    }
-
-                    if (_session.getStage() == SessionStage.REQUEST) {
-                        _session.processLifecycle()
-                    }
-
-                    val pkg = sendMessage(recipient, message, listeningPort, _session)
-                    logger.info("Sent $pkg to $recipient with session: $_session")
-
-                    return null
-                } else {
-                    val session = Session.createInactiveSession()
-                    val pkg = sendMessage(recipient, message, listeningPort, session)
-                    logger.info("Sent $pkg to $recipient with inactive session")
-
-                    return null
+    /**
+     * Static function that is used to send messages to other peers
+     * Parameters _class and _session are used to determine whether you requesting or not information from peer
+     * If _class specified, new session will be generated and remote peer can receive it with controller method parameters
+     * then they can send it back along with a message. When we receive our session back, we execute @On method, get
+     * it's return value and return it from here. Little bit complicated (idk how to explain it even to myself, so forgive me).
+     * It helps to keep request processing logic in controllers and use return value everywhere we need.
+     *
+     *
+     * Some scheme, maybe it will help:
+     *
+     * 1. [local machine] send(address, message, port, _class = String::class.java) //blocks after this ->
+     * 2. [remote machine] @On(sender, payload, session) // it's like request handler now ->
+     * 3. [remote machine] send(address, message, port, _session = session) ->
+     * 4. [local machine] @On(sender, payload): String // it's like response handler now ->
+     * 5. [local machine] // send from step 1 unblocks and returns String
+     *
+     *
+     * @param recipient {net.stits.osen.Address} message recipient
+     * @param message {net.stits.osen.Message} message itself
+     * @param listeningPort {Int} port which you listen to so remote peer can send us messages too
+     * @param _class {Class<T>} - specify this if you expect to receive some payload of type T back
+     * @param _session {Session} - specify this if you sending a response (you should have it from @On method parameter)
+     *
+     * @return {Any?} some payload you return from @On method
+     */
+    fun send(recipient: Address, message: Message, listeningPort: Int, _class: Class<out Any?>? = null, _session: Session? = null, timeout: Long = 30000): Any? {
+        if (_class == null) {
+            if (_session != null) {
+                if (_session.getStage() == SessionStage.CONSUMED) {
+                    throw IllegalArgumentException("Session ${_session.id} is expired.")
                 }
-            }
 
-            if (_session != null) throw IllegalArgumentException(
-                    "Specifying _session means that you want to send something in response. " +
-                            "Specifying _class means that you want to request for something. " +
-                            "Choose one, please."
-            )
+                if (_session.getStage() == SessionStage.REQUEST) {
+                    _session.processLifecycle()
+                }
 
-            return runBlocking {
-                val p2p = getP2PBeanFromContext()
+                val pkg = sendMessage(recipient, message, listeningPort, _session)
+                logger.info("Sent $pkg to $recipient with session: $_session")
 
-                val session = Session.createSession()
-
+                return null
+            } else {
+                val session = Session.createInactiveSession()
                 val pkg = sendMessage(recipient, message, listeningPort, session)
-                logger.info("Sent $pkg to $recipient, waiting for response...")
+                logger.info("Sent $pkg to $recipient with inactive session")
 
-                val delay = 5
-                val response = withTimeoutOrNull(timeout) {
-                    repeat(timeout.div(delay).toInt()) {
-                        if (p2p.responses.containsKey(session.id)) {
-                            val response = p2p.responses[session.id]
-
-                            logger.info("Received response: $response")
-                            return@withTimeoutOrNull response
-                        } else {
-                            delay(delay)
-                        }
-                    }
-                }
-
-                p2p.responses.remove(session.id)
-
-                _class.cast(response)
+                return null
             }
         }
 
-        private fun sendMessage(recipient: Address, message: Message, listeningPort: Int, session: Session): Package {
-            val metadata = PackageMetadata(listeningPort, session)
-            val pkg = Package(message.serialize(), metadata)
-            writePackage(pkg, recipient, maxPacketSizeBytes)
+        if (_session != null) throw IllegalArgumentException(
+                "Specifying _session means that you want to send something in response. " +
+                        "Specifying _class means that you want to request for something. " +
+                        "Choose one, please."
+        )
 
-            return pkg
+        return runBlocking {
+            val session = Session.createSession()
+
+            val pkg = sendMessage(recipient, message, listeningPort, session)
+            logger.info("Sent $pkg to $recipient, waiting for response...")
+
+            val delay = 5
+            val response = withTimeoutOrNull(timeout) {
+                repeat(timeout.div(delay).toInt()) {
+                    if (responses.containsKey(session.id)) {
+                        val response = responses[session.id]
+
+                        logger.info("Received response: $response")
+                        return@withTimeoutOrNull response
+                    } else {
+                        delay(delay)
+                    }
+                }
+            }
+
+            responses.remove(session.id)
+
+            _class.cast(response)
         }
+    }
 
-        private fun getP2PBeanFromContext(): P2P {
-            return applicationContext!!.getBean(P2P::class.java)
-        }
+    private fun sendMessage(recipient: Address, message: Message, listeningPort: Int, session: Session): Package {
+        val metadata = PackageMetadata(listeningPort, session)
+        val pkg = Package(message.serialize(), metadata)
+        writePackage(pkg, recipient, maxPacketSizeBytes)
 
-        private fun writePackage(pkg: Package, recipient: Address, maxPacketSizeBytes: Int) {
-            val serializedPkg = Package.serialize(pkg)
-                    ?: throw IllegalArgumentException("Can not write empty package")
+        return pkg
+    }
 
-            if (maxPacketSizeBytes < serializedPkg.size)
-                throw RuntimeException("Unable to send packages with size more than $maxPacketSizeBytes")
+    private fun writePackage(pkg: Package, recipient: Address, maxPacketSizeBytes: Int) {
+        val serializedPkg = Package.serialize(pkg)
+                ?: throw IllegalArgumentException("Can not write empty package")
 
-            val packet = DatagramPacket(serializedPkg, serializedPkg.size, recipient.getInetAddress(), recipient.port)
-            logger.info("Sending: ${packet.data.toString(StandardCharsets.UTF_8)}")
+        if (maxPacketSizeBytes < serializedPkg.size)
+            throw RuntimeException("Unable to send packages with size more than $maxPacketSizeBytes")
 
-            clientSocket.send(packet)
-        }
+        val packet = DatagramPacket(serializedPkg, serializedPkg.size, recipient.getInetAddress(), recipient.port)
+        logger.info("Sending: ${packet.data.toString(StandardCharsets.UTF_8)}")
+
+        clientSocket.send(packet)
     }
 }
 

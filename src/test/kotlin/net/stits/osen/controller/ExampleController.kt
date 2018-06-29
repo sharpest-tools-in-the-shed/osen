@@ -24,7 +24,7 @@ data class TestPayload(val text: String = "test")
  * You can autowire everything spring allows to autowire
  */
 @P2PController(TOPIC_TEST)
-class ExampleController(private val service: TestService) {
+class ExampleController(private val service: TestService, private val p2p: P2P) {
     /**
      * You can write handlers in any way you like:
      *      handleTestRequest()
@@ -43,7 +43,7 @@ class ExampleController(private val service: TestService) {
         assert(session.id >= 0) { "Session id is invalid" }
 
         val message = Message(TOPIC_TEST, TestMessageTypes.TEST_RESPONSE, "Test string payload")
-        P2P.send(recipient = sender, message = message, listeningPort = 1337, _session = session)
+        p2p.send(recipient = sender, message = message, listeningPort = 1337, _session = session)
     }
 
     @On(TestMessageTypes.TEST_RESPONSE)
@@ -58,7 +58,7 @@ class ExampleController(private val service: TestService) {
         assert(payload == null)
 
         val message = Message(TOPIC_TEST, TestMessageTypes.TEST_NULL_PAYLOAD_RES, payload)
-        P2P.send(sender, message, 1337, _session = session)
+        p2p.send(sender, message, 1337, _session = session)
     }
 
     @On(TestMessageTypes.TEST_NULL_PAYLOAD_RES)
@@ -71,7 +71,7 @@ class ExampleController(private val service: TestService) {
     @On(TestMessageTypes.TEST_MULTIPLE_REQUESTS)
     fun `test multiple requests`(payload: String, sender: Address, session: Session) {
         val message = Message(TOPIC_TEST, TestMessageTypes.TEST_MULTIPLE_RESPONSES, payload)
-        P2P.send(sender, message, 1337, _session = session)
+        p2p.send(sender, message, 1337, _session = session)
     }
 
     @On(TestMessageTypes.TEST_MULTIPLE_RESPONSES)
@@ -82,7 +82,7 @@ class ExampleController(private val service: TestService) {
     @On(TestMessageTypes.TEST_NO_RETURN_TYPE_ON_RESPONSE_REQ)
     fun `test no return type on response req`(payload: String, sender: Address, session: Session) {
         val message = Message(TOPIC_TEST, TestMessageTypes.TEST_NO_RETURN_TYPE_ON_RESPONSE_RES, payload)
-        P2P.send(sender, message, 1337, _session = session)
+        p2p.send(sender, message, 1337, _session = session)
     }
 
     @On(TestMessageTypes.TEST_NO_RETURN_TYPE_ON_RESPONSE_RES)
