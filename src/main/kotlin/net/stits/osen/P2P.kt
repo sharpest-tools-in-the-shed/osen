@@ -35,6 +35,9 @@ typealias TopicHandlers = HashMap<String, TopicController>
 data class TopicController(val controller: Any, val listeners: Map<String, Method>)
 
 /**
+ * TODO: split this class into 2: first handles all annotation stuff, second handles networking
+ * TODO: add annotation @SpringP2PApplication(port) that starts network when annotating some class
+ *
  * On construction it scans all packages (or package you pass to it) and finds classes annotated with @P2PController,
  * adds them to Spring Context, then it finds all methods of this class with @On annotation and saves this information.
  * Then it starts UDP-server on specified port and listens for packets.
@@ -46,12 +49,14 @@ data class TopicController(val controller: Any, val listeners: Map<String, Metho
  * @param listeningPort {Int} port to listen for UPD-packets
  * @param maxPacketSizeBytes {Int} maximum size of packet // TODO: make this work or remove
  */
-class P2P(val listeningPort: Int, private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) {
+class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) {
     private val topicHandlers: TopicHandlers = hashMapOf()
     private val clientSocket = DatagramSocket()
 
     @Autowired
     lateinit var context: GenericApplicationContext
+
+    var listeningPort: Int = 1337
 
     /**
      * This map is used to store responses. After "send" with specified _class invoked it is watching this map for a
@@ -88,6 +93,11 @@ class P2P(val listeningPort: Int, private val packageToScan: String, private val
             val beanInstance = context.getBean(beanClass)
             val topicController = TopicController(beanInstance, listeners)
             topicHandlers[messageTopic] = topicController
+
+            // configuring port according to node.port if specified
+            val portFromProps = context.environment.getProperty("node.port")
+            if (portFromProps != null)
+                listeningPort = portFromProps.toInt()
         }
 
         logger.info("Spring P2P extension successfully initialized, starting network up...")
