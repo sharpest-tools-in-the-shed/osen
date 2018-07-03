@@ -46,7 +46,7 @@ data class TopicController(val controller: Any, val listeners: Map<String, Metho
  * @param listeningPort {Int} port to listen for UPD-packets
  * @param maxPacketSizeBytes {Int} maximum size of packet // TODO: make this work or remove
  */
-class P2P(private val listeningPort: Int, private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) {
+class P2P(val listeningPort: Int, private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) {
     private val topicHandlers: TopicHandlers = hashMapOf()
     private val clientSocket = DatagramSocket()
 
