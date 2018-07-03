@@ -7,12 +7,12 @@ import org.springframework.context.annotation.Bean
 
 @SpringBootApplication
 open class FirstApplication {
-    private val port = 1337
     private val packageToScan = FirstApplication::class.java.`package`.name
 
     @Bean()
     open fun netInitializer(): P2P {
-        return P2P(listeningPort = port, packageToScan = packageToScan)
+        // default port is 1337, to switch it use "node.port" spring env property
+        return P2P(packageToScan = packageToScan)
     }
 }
 
