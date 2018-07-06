@@ -12,7 +12,7 @@ open class FirstApplication {
     @Bean()
     open fun netInitializer(): P2P {
         // default port is 1337, to switch it use "node.port" spring env property
-        return P2P(packageToScan = packageToScan)
+        return P2P(basePackages = arrayOf(packageToScan))
     }
 }
 

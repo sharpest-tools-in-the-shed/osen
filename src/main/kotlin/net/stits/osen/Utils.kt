@@ -11,6 +11,9 @@ import java.util.*
 import java.util.logging.Logger
 
 
+const val MAX_PACKET_SIZE_BYTES = 1024
+
+// TODO: this concept can be more generic allowing more complex flow to be implemented
 object SessionStage {
     const val REQUEST = "REQUEST"
     const val RESPONSE = "RESPONSE"
@@ -27,13 +30,13 @@ object SessionStage {
     }
 }
 
+/**
+ * This class incapsulates microsession for request-response interaction model. It enables us to know what method should be invoked and when.
+ */
 data class Session(val id: Int, private var stage: String = SessionStage.REQUEST) {
     fun processLifecycle() {
-        if (stage == SessionStage.CONSUMED)
-            throw IllegalStateException("Session $id is expired. Unable to switch stage.")
-
-        if (stage == SessionStage.INACTIVE)
-            throw IllegalStateException("Unable to process inactive stage of session $id")
+        check(stage != SessionStage.CONSUMED) { "Session $id is expired. Unable to switch stage." }
+        check(stage != SessionStage.INACTIVE) { "Unable to process inactive stage of session $id" }
 
         stage = SessionStage.next(stage)
     }
@@ -98,10 +101,12 @@ data class Message(val topic: String, val type: String, val payload: Any? = null
      * manually serialize it to ByteArray and then manually deserialize in needed type.
      */
     fun serialize(): SerializedMessage {
-        var serializedPayload = mapper.writeValueAsBytes(payload)
+        logger.info("Serializing payload $payload to bytes")
 
-        if (serializedPayload == null)
-            serializedPayload = ByteArray(0)
+        val serializedPayload = if (payload == null)
+            ByteArray(0)
+        else
+            mapper.writeValueAsBytes(payload)
 
         return SerializedMessage(topic, type, serializedPayload)
     }
@@ -124,6 +129,7 @@ data class SerializedMessage(val topic: String, val type: String, val payload: B
      */
     fun <T> deserialize(clazz: Class<T>): Message? {
         logger.info("Deserializing payload $payload to type ${clazz.canonicalName}")
+
         val deserializedPayload = mapper.readValue(payload, clazz)
 
         return Message(topic, type, deserializedPayload)

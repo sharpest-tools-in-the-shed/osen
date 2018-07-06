@@ -2,9 +2,9 @@ package net.stits.osen
 
 import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
-import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.withTimeoutOrNull
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.config.BeanDefinition
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
 import org.springframework.context.support.GenericApplicationContext
 import org.springframework.core.type.filter.AnnotationTypeFilter
@@ -15,7 +15,6 @@ import java.nio.charset.StandardCharsets
 import java.util.*
 import javax.annotation.PostConstruct
 import kotlin.concurrent.thread
-
 
 /**
  * Mapping [Message topic -> Controller that handles this topic]
@@ -30,26 +29,33 @@ typealias TopicHandlers = HashMap<String, TopicController>
  * TODO: maybe add support for multiple handlers per topic-type
  *
  * @param controller {Any} @P2PController-annotated instance
- * @param listeners {String -> Method} mapping [MessageType -> @On method]
+ * @param onListeners {String -> Method} mapping [MessageType -> @On annotated method]
+ * @param onRequestListeners {String -> Method} mapping [MessageType -> @OnRequest annotated method]
+ * @param onResponseListeners {String -> Method} mapping [MessageType -> @OnResponse annotated method]
  */
-data class TopicController(val controller: Any, val listeners: Map<String, Method>)
+data class TopicController(
+        val controller: Any,
+        val onListeners: Map<String, Method>,
+        val onRequestListeners: Map<String, Method>,
+        val onResponseListeners: Map<String, Method>
+)
 
 /**
+ * TODO: maybe implement flows in TCP? it would be nice to write flows like methods of controller (absolutely sequentially)
  * TODO: split this class into 2: first handles all annotation stuff, second handles networking
- * TODO: add annotation @SpringP2PApplication(port) that starts network when annotating some class
+ * TODO: add annotation @SpringP2PApplication(port) that starts network when annotating some class - this is not possible (or you need to change spring initialization procedure)
  *
  * On construction it scans all packages (or package you pass to it) and finds classes annotated with @P2PController,
- * adds them to Spring Context, then it finds all methods of this class with @On annotation and saves this information.
+ * adds them to Spring Context, then it finds all methods of this class with annotations and saves this information.
  * Then it starts UDP-server on specified port and listens for packets.
  * Every packet is transformed (bytes -> json) into net.stits.osen.Package object that contains net.stits.osen.Message
- * object that contains Topic and Type which are used to determine what controller method should be invoked.
+ * object that contains Topic, Type and Session which are used to determine what controller method should be invoked.
  *
- * @param packageToScan {String} you should specify this in order to say Spring classpath scanner where do
- * your @P2PControllers placed // TODO: spring by itself scans packages without this somehow
- * @param listeningPort {Int} port to listen for UPD-packets
- * @param maxPacketSizeBytes {Int} maximum size of packet // TODO: make this work or remove
+ * @param basePackages {Array<String>} - you should specify this in order to say Spring classpath scanner where do
+ * your @P2PControllers placed // TODO: somehow get this values from spring
+ * @param maxPacketSizeBytes {Int} - you can't send and receive packages larger than this value
  */
-class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int = 1024) {
+class P2P(private val basePackages: Array<String>, private val maxPacketSizeBytes: Int = MAX_PACKET_SIZE_BYTES) {
     private val topicHandlers: TopicHandlers = hashMapOf()
     private val clientSocket = DatagramSocket()
 
@@ -59,23 +65,24 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
     var listeningPort: Int = 1337
 
     /**
-     * This map is used to store responses. After "send" with specified _class invoked it is watching this map for a
-     * response (session id is used as key) and returns it when response arrives.
+     * This map is used to store responses. After requestFrom() or requestFromTimeouted() with specified invoked it watch
+     * this map for a response (session id is used as key) and returns it when response arrives.
      *
-     * TODO: maybe make concurrent
+     * TODO: maybe make it concurrent
      */
     val responses = hashMapOf<Int, Any?>()
 
     /**
-     * This method is invoked by Spring itself. It scans through specified package, finds all needed classes and methods
+     * This method is invoked by Spring. It scans through specified packages, finds all needed classes and methods
      * and then initializes network
      */
     @PostConstruct
-    private fun initBySpring() {
+    private fun init() {
         val provider = ClassPathScanningCandidateComponentProvider(false)
         provider.addIncludeFilter(AnnotationTypeFilter(P2PController::class.java))
 
-        val beanDefinitions = provider.findCandidateComponents(packageToScan)
+        val beanDefinitions = linkedSetOf<BeanDefinition>()
+        basePackages.forEach { pack -> beanDefinitions.addAll(provider.findCandidateComponents(pack)) }
         beanDefinitions.forEach { beanDefinition ->
 
             // adding found @P2PControllers to spring context
@@ -86,18 +93,22 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
             val messageTopic = beanClass.getAnnotation(P2PController::class.java).topic
             logger.info("Found P2P controller: ${beanClass.canonicalName} (topic: $messageTopic)")
 
-            // finding @On methods
-            val listeners = getAllAnnotatedMethodsOfBean(beanClass)
+            // finding annotated methods
+            val onListeners = getAllAnnotatedOnMethodsOfBean(beanClass)
+            val onRequestListeners = getAllAnnotatedOnRequestMethodsOfBean(beanClass)
+            val onResponseListeners = getAllAnnotatedOnResponseMethodsOfBean(beanClass)
 
             // adding instances of @P2PControllers to list of topic handlers
             val beanInstance = context.getBean(beanClass)
-            val topicController = TopicController(beanInstance, listeners)
+            val topicController = TopicController(beanInstance, onListeners, onRequestListeners, onResponseListeners)
             topicHandlers[messageTopic] = topicController
 
             // configuring port according to node.port if specified
             val portFromProps = context.environment.getProperty("node.port")
-            if (portFromProps != null)
+            if (portFromProps != null) {
+                logger.info("Found node.port spring property")
                 listeningPort = portFromProps.toInt()
+            }
         }
 
         logger.info("Spring P2P extension successfully initialized, starting network up...")
@@ -107,7 +118,65 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
         }
     }
 
-    private fun getAllAnnotatedMethodsOfBean(beanClass: Class<*>): Map<String, Method> {
+    /**
+     * This method is used to check there are no unexpected arguments on controller methods and throw exception at startup
+     */
+    private fun assertArgumentsPresentAt(_class: Class<*>, method: Method, signatureBuilder: () -> String) {
+        var payloadFound = false
+        var addressFound = false
+
+        assert(method.parameters.size <= 2) {
+            "Method ${method.name} of class $_class has more than 2 arguments.\n${signatureBuilder()}"
+        }
+
+        assert(
+                method.parameters
+                        .map { parameter ->
+                            when {
+                                Address::class.java.isAssignableFrom(parameter.type) && !addressFound -> {
+                                    addressFound = true
+                                    true
+                                }
+                                Address::class.java.isAssignableFrom(parameter.type) && addressFound && !payloadFound -> {
+                                    payloadFound = true
+                                    true
+                                }
+                                !payloadFound -> {
+                                    payloadFound = true
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                        .all { valid -> valid }
+
+        ) { "Method ${method.name} of class $_class has an invalid signature.\n${signatureBuilder()}" }
+    }
+
+    /**
+     * This method checks if given method has return value and throws at startup if there is no one
+     */
+    private inline fun assertReturnValuePresentAt(_class: Class<*>, method: Method, signatureBuilder: () -> String) {
+        assert(method.returnType != Void.TYPE) {
+            "Method ${method.name} of class $_class has no return value.\n${signatureBuilder()}"
+        }
+    }
+
+    /**
+     * This method checks if given method doesn't have return value and throws at startup if there is one
+     */
+    private inline fun assertReturnValueNotPresentAt(_class: Class<*>, method: Method, signatureBuilder: () -> String) {
+        assert(method.returnType == Void.TYPE) {
+            "Method ${method.name} of class $_class has no return value.\n${signatureBuilder()}"
+        }
+    }
+
+    /**
+     * Finds all methods of a given class which have @On annotation
+     *
+     * --- wish someday kotlin will support annotation inheritance =C ---
+     */
+    private fun getAllAnnotatedOnMethodsOfBean(beanClass: Class<*>): Map<String, Method> {
         val onMethods = beanClass.methods.filter { method -> method.isAnnotationPresent(On::class.java) }
         val listeners = hashMapOf<String, Method>()
 
@@ -115,9 +184,13 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
             val messageType = method.getAnnotation(On::class.java).type
             val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
 
-            logger.info("\tFound @OnRequest annotated method: ${method.name} (type: $messageType)")
+            logger.info("\tFound @On annotated method: ${method.name} (type: $messageType)")
             if (methodArgs.isNotEmpty())
                 logger.info("\t - Parameters: ${methodArgs.joinToString(", ")}")
+
+            val signatureError = "@On annotated method signature is (a: <Any payload type>, b: Address) -> Unit"
+            assertArgumentsPresentAt(beanClass, method) { signatureError }
+            assertReturnValueNotPresentAt(beanClass, method) { signatureError }
 
             listeners[messageType] = method
         }
@@ -125,6 +198,67 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
         return listeners
     }
 
+    /**
+     * Finds all methods of a given class which have @OnRequest annotation
+     *
+     * --- wish someday kotlin will support annotation inheritance =C ---
+     */
+    private fun getAllAnnotatedOnRequestMethodsOfBean(beanClass: Class<*>): Map<String, Method> {
+        val onMethods = beanClass.methods.filter { method -> method.isAnnotationPresent(OnRequest::class.java) }
+        val listeners = hashMapOf<String, Method>()
+
+        onMethods.forEach { method ->
+            val messageType = method.getAnnotation(OnRequest::class.java).type
+            val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
+
+            logger.info("\tFound @OnRequest annotated method: ${method.name} (type: $messageType)")
+            if (methodArgs.isNotEmpty())
+                logger.info("\t - Parameters: ${methodArgs.joinToString(", ")}")
+
+            val signatureError = "@OnRequest annotated method signature is (a: <Any request payload type>, b: Address) -> <Any response payload type>"
+            assertArgumentsPresentAt(beanClass, method) { signatureError }
+            assertReturnValuePresentAt(beanClass, method) { signatureError}
+
+            listeners[messageType] = method
+        }
+
+        return listeners
+    }
+
+    /**
+     * Finds all methods of a given class which have @OnResponse annotation
+     *
+     * --- wish someday kotlin will support annotation inheritance =C ---
+     */
+    private fun getAllAnnotatedOnResponseMethodsOfBean(beanClass: Class<*>): Map<String, Method> {
+        val onMethods = beanClass.methods.filter { method -> method.isAnnotationPresent(OnResponse::class.java) }
+        val listeners = hashMapOf<String, Method>()
+
+        onMethods.forEach { method ->
+            val messageType = method.getAnnotation(OnResponse::class.java).type
+            val methodArgs = method.parameters.map { "${it.name}:${it.type}" }
+
+            logger.info("\tFound @OnResponse annotated method: ${method.name} (type: $messageType)")
+            if (methodArgs.isNotEmpty())
+                logger.info("\t - Parameters: ${methodArgs.joinToString(", ")}")
+
+            val signatureError = "@OnResponse annotated method signature is (a: <Any response payload type>, b: Address) -> <Any return value type>"
+            assertArgumentsPresentAt(beanClass, method) { signatureError }
+            assertReturnValuePresentAt(beanClass, method) { signatureError}
+
+            listeners[messageType] = method
+        }
+
+        return listeners
+    }
+
+    /**
+     * Initializes network (listens for packets and executes controller methods).
+     *
+     * Usage cheatsheet:
+     * [node 1]: sendTo() -> [node 2]: @On
+     * [node 1]: requestFrom() -> [node 2]: @OnRequest -> [node 1]: @OnResponse
+     */
     private fun initNetwork() {
         val serverSocket = DatagramSocket(listeningPort)
         val packet = DatagramPacket(ByteArray(maxPacketSizeBytes), maxPacketSizeBytes)
@@ -134,8 +268,8 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
         while (true) {
             serverSocket.receive(packet)
 
-            val recipient = Address(packet.address.hostAddress, packet.port)
-            logger.info("Got connection from: $recipient")
+            val sender = Address(packet.address.hostAddress, packet.port)
+            logger.info("Got connection from: $sender")
 
             val pkg = readPackage(packet)
 
@@ -144,15 +278,14 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
                 continue
             }
 
-            logger.info("Read $pkg from $recipient")
+            logger.info("Read $pkg from $sender")
 
-            val actualRecipient = Address(recipient.host, pkg.metadata.port)
-            logger.info("$recipient is actually $actualRecipient")
+            val actualSender = Address(sender.host, pkg.metadata.port)
+            logger.info("$sender is actually $actualSender")
 
             val topic = pkg.message.topic
             val type = pkg.message.type
             val session = pkg.metadata.session
-
             val topicHandler = topicHandlers[topic]
 
             if (topicHandler == null) {
@@ -160,143 +293,164 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
                 continue
             }
 
-            handleOnInvocation(topicHandler, topic, type, pkg.message, actualRecipient, session)
-        }
-    }
-
-    private fun handleOnInvocation(topicHandler: TopicController, topic: String, type: String, message: SerializedMessage, recipient: Address, session: Session) {
-        val messageHandler = topicHandler.listeners[type]
-        if (messageHandler == null) {
-            logger.warning("No method to handle message of type: $type of topic: $topic, skipping...")
-            return
-        }
-
-        if (messageHandler.parameters.size > 3) {
-            logger.warning("Method ${messageHandler.name} of class ${topicHandler.controller} has more then 3 arguments, skipping...")
-            return
-        }
-
-        val arguments = Array(messageHandler.parameters.size) { index ->
-            val parameter = messageHandler.parameters[index]
-
-            if (Address::class.java.isAssignableFrom(parameter.type))
-                recipient
-            else if (Session::class.java.isAssignableFrom(parameter.type)) {
-                session
-            } else {
-                if (message.payload.isEmpty())
-                    null
-                else {
-                    val deserializedMessage = message.deserialize(parameter.type)
-                            ?: throw RuntimeException("Message deserialization failure, skipping...")
-
-                    deserializedMessage.payload
-                }
-            }
-        }
-
-        logger.info("Trying to invoke method: ${messageHandler.name} with arguments: ${arguments.toList()}")
-
-        launch {
+            // TODO: prevent MITM
             when (session.getStage()) {
-                SessionStage.REQUEST -> messageHandler.invoke(topicHandler.controller, *arguments)
-                SessionStage.RESPONSE -> responses[session.id] = messageHandler.invoke(topicHandler.controller, *arguments)
-                else -> throw RuntimeException("Session ${session.id} is in invalid stage: ${session.getStage()}. Unable to invoke ${messageHandler.name}.")
+                SessionStage.REQUEST -> handleOnRequestInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
+                SessionStage.RESPONSE -> handleOnResponseInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
+                SessionStage.INACTIVE -> handleOnInvocation(topicHandler, topic, type, pkg.message, actualSender)
+                else -> logger.warning("Session ${session.id} is expired. Won't invoke anything.")
             }
         }
-    }
-
-    private fun readPackage(datagramPacket: DatagramPacket): Package? {
-        return Package.deserialize(datagramPacket.data)
-    }
-
-    companion object {
-        val logger = loggerFor(Message::class.java)
     }
 
     /**
-     * Static function that is used to send messages to other peers
-     * Parameters _class and _session are used to determine whether you requesting or not information from peer
-     * If _class specified, new session will be generated and remote peer can receive it with controller method parameters
-     * then they can send it back along with a message. When we receive our session back, we execute @On method, get
-     * it's return value and return it from here. Little bit complicated (idk how to explain it even to myself, so forgive me).
-     * It helps to keep request processing logic in controllers and use return value everywhere we need.
+     * Finds needed @On annotated method and executes it with correct arguments
      *
-     *
-     * Some scheme, maybe it will help:
-     *
-     * 1. [local machine] send(address, message, port, _class = String::class.java) //blocks after this ->
-     * 2. [remote machine] @On(sender, payload, session) // it's like request handler now ->
-     * 3. [remote machine] send(address, message, port, _session = session) ->
-     * 4. [local machine] @On(sender, payload): String // it's like response handler now ->
-     * 5. [local machine] // send from step 1 unblocks and returns String
-     *
-     *
-     * @param recipient {net.stits.osen.Address} message recipient
-     * @param message {net.stits.osen.Message} message itself
-     * @param listeningPort {Int} port which you listen to so remote peer can send us messages too
-     * @param _class {Class<T>} - specify this if you expect to receive some payload of type T back
-     * @param _session {Session} - specify this if you sending a response (you should have it from @On method parameter)
-     *
-     * @return {Any?} some payload you return from @On method
+     * TODO: somehow get rid of duplication
      */
-    fun send(recipient: Address, message: Message, listeningPort: Int, _class: Class<out Any?>? = null, _session: Session? = null, timeout: Long = 30000): Any? {
-        if (_class == null) {
-            if (_session != null) {
-                if (_session.getStage() == SessionStage.CONSUMED) {
-                    throw IllegalArgumentException("Session ${_session.id} is expired.")
-                }
-
-                if (_session.getStage() == SessionStage.REQUEST) {
-                    _session.processLifecycle()
-                }
-
-                val pkg = sendMessage(recipient, message, listeningPort, _session)
-                logger.info("Sent $pkg to $recipient with session: $_session")
-
-                return null
-            } else {
-                val session = Session.createInactiveSession()
-                val pkg = sendMessage(recipient, message, listeningPort, session)
-                logger.info("Sent $pkg to $recipient with inactive session")
-
-                return null
-            }
+    private fun handleOnInvocation(topicHandler: TopicController, topic: String, type: String, message: SerializedMessage, recipient: Address) {
+        val messageHandler = topicHandler.onListeners[type]
+        if (messageHandler == null) {
+            logger.warning("No @On annotated method to handle message of type: $type of topic: $topic, skipping...")
+            return
         }
 
-        if (_session != null) throw IllegalArgumentException(
-                "Specifying _session means that you want to send something in response. " +
-                        "Specifying _class means that you want to request for something. " +
-                        "Choose one, please."
-        )
+        val arguments = parseMethodArguments(messageHandler, recipient, message)
 
-        return runBlocking {
-            val session = Session.createSession()
+        logger.info("Trying to invoke method: ${messageHandler.name} with arguments: ${arguments.toList()}")
+        launch { messageHandler.invoke(topicHandler.controller, *arguments) }
+    }
 
-            val pkg = sendMessage(recipient, message, listeningPort, session)
-            logger.info("Sent $pkg to $recipient, waiting for response...")
+    /**
+     * Finds needed @OnRequest annotated method and executes it with correct arguments
+     *
+     * TODO: somehow get rid of duplication
+     */
+    private fun handleOnRequestInvocation(topicHandler: TopicController, topic: String, type: String, requestMessage: SerializedMessage, recipient: Address, session: Session) {
+        val messageHandler = topicHandler.onRequestListeners[type]
+        if (messageHandler == null) {
+            logger.warning("No @OnRequest annotated method to handle message of type: $type of topic: $topic, skipping...")
+            return
+        }
 
-            val delay = 5
-            val response = withTimeoutOrNull(timeout) {
-                repeat(timeout.div(delay).toInt()) {
-                    if (responses.containsKey(session.id)) {
-                        val response = responses[session.id]
+        val arguments = parseMethodArguments(messageHandler, recipient, requestMessage)
 
-                        logger.info("Received response: $response")
-                        return@withTimeoutOrNull response
-                    } else {
-                        delay(delay)
-                    }
-                }
-            }
-
-            responses.remove(session.id)
-
-            _class.cast(response)
+        logger.info("Trying to invoke method: ${messageHandler.name} with arguments: ${arguments.toList()}")
+        launch {
+            val payload = messageHandler.invoke(topicHandler.controller, *arguments)
+            val responseMessage = Message(topic, type, payload)
+            respondTo(recipient, session, responseMessage)
         }
     }
 
-    private fun sendMessage(recipient: Address, message: Message, listeningPort: Int, session: Session): Package {
+    /**
+     * Finds needed @OnResponse annotated method and executes it with correct arguments
+     *
+     * TODO: somehow get rid of duplication
+     */
+    private fun handleOnResponseInvocation(topicHandler: TopicController, topic: String, type: String, responseMessage: SerializedMessage, recipient: Address, session: Session) {
+        val messageHandler = topicHandler.onResponseListeners[type]
+        if (messageHandler == null) {
+            logger.warning("No @OnResponse method to handle message of type: $type of topic: $topic, skipping...")
+            return
+        }
+
+        val arguments = parseMethodArguments(messageHandler, recipient, responseMessage)
+
+        logger.info("Trying to invoke method: ${messageHandler.name} with arguments: ${arguments.toList()}")
+        launch { responses[session.id] = messageHandler.invoke(topicHandler.controller, *arguments) } // TODO: possible memory leak (it can be stored after it deleted in requestFrom())
+    }
+
+    /**
+     * Maps method parameters to arguments
+     */
+    private fun parseMethodArguments(method: Method, recipient: Address, message: SerializedMessage): Array<Any?> {
+        return Array(method.parameters.size) { index ->
+            val parameter = method.parameters[index]
+
+            when {
+                Address::class.java.isAssignableFrom(parameter.type) -> recipient
+                message.payload.isEmpty() -> null
+                else -> {
+                    message.deserialize(parameter.type)
+                            ?.payload
+                            ?: error("Payload (${message.payload.toString(StandardCharsets.UTF_8)}) deserialization failure, skipping...")
+                }
+            }
+        }
+    }
+
+    companion object {
+        val logger = loggerFor(P2P::class.java)
+    }
+
+    /**
+     * This function is used for a stateless message exchange. It triggers @On annotated method of controller.
+     */
+    fun sendTo(recipient: Address, messageBuilder: () -> Message) {
+        val session = Session.createInactiveSession()
+        val pkg = sendMessage(recipient, messageBuilder(), listeningPort, session)
+        logger.info("Sent $pkg to $recipient with inactive session")
+    }
+
+    /**
+     * This functions are just shorthands for sendAndReceive()
+     */
+    suspend inline fun <reified T : Any> requestFrom(recipient: Address, messageBuilder: () -> Message): T? = sendAndReceive(recipient, messageBuilder(), T::class.java, 5000)
+    suspend inline fun <reified T : Any> requestFromTimeouted(recipient: Address, timeout: Long, messageBuilder: () -> Message): T? = sendAndReceive(recipient, messageBuilder(), T::class.java, timeout)
+
+    /**
+     * This function is executed by @OnRequest annotated method with it's return value as a payload
+     * It sends back response for a given session and triggers @OnResponse annotated method of controller.
+     */
+    private fun respondTo(recipient: Address, session: Session, message: Message) {
+        when (session.getStage()) {
+            SessionStage.REQUEST -> session.processLifecycle()
+            else -> throw IllegalArgumentException("Session ${session.id} is in illegal stage.")
+        }
+
+        val pkg = sendMessage(recipient, message, listeningPort, session)
+        logger.info("Responded $pkg to $recipient with session: $session")
+    }
+
+    /**
+     * Sends some message creating new session and waits until response for this session appears.
+     * Triggers @OnRequest annotated method of controller.
+     */
+    suspend fun <T> sendAndReceive(recipient: Address, message: Message, _class: Class<T>, timeout: Long = 30000): T? {
+        val session = Session.createSession()
+
+        val pkg = sendMessage(recipient, message, listeningPort, session)
+        logger.info("Sent $pkg to $recipient, waiting for response...")
+
+        val response = waitForResponse(session.id, timeout)
+        responses.remove(session.id)
+
+        return _class.cast(response)
+    }
+
+    /**
+     * Watches responses map for specific responseId until response appears or timeout is passed
+     */
+    private suspend fun waitForResponse(responseId: Int, timeout: Long) = withTimeoutOrNull(timeout) {
+        val delay = 5
+        repeat(timeout.div(delay).toInt()) {
+            if (responses.containsKey(responseId)) {
+                val response = responses[responseId]
+
+                logger.info("Received response: $response")
+                return@withTimeoutOrNull response
+            } else {
+                delay(delay)
+            }
+        }
+    }
+
+    /**
+     * Same as sendTo() or requestFrom() but u can set all parameters by yourself
+     * This function can be used to implement some non-standard logic
+     */
+    fun sendMessage(recipient: Address, message: Message, listeningPort: Int, session: Session): Package {
         val metadata = PackageMetadata(listeningPort, session)
         val pkg = Package(message.serialize(), metadata)
         writePackage(pkg, recipient, maxPacketSizeBytes)
@@ -304,6 +458,9 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
         return pkg
     }
 
+    /**
+     * Writes package to datagram packet
+     */
     private fun writePackage(pkg: Package, recipient: Address, maxPacketSizeBytes: Int) {
         val serializedPkg = Package.serialize(pkg)
                 ?: throw IllegalArgumentException("Can not write empty package")
@@ -315,6 +472,13 @@ class P2P(private val packageToScan: String, private val maxPacketSizeBytes: Int
         logger.info("Sending: ${packet.data.toString(StandardCharsets.UTF_8)}")
 
         clientSocket.send(packet)
+    }
+
+    /**
+     * Parses datagram packets and get packages
+     */
+    private fun readPackage(datagramPacket: DatagramPacket): Package? {
+        return Package.deserialize(datagramPacket.data)
     }
 }
 
@@ -333,3 +497,19 @@ annotation class P2PController(val topic: String)
  */
 @Target(AnnotationTarget.FUNCTION)
 annotation class On(val type: String)
+
+/**
+ * Annotation that is used to mark methods of controller class that should handle requests
+ *
+ * @param type {String} when we receive message with this type, this method invocation is triggered
+ */
+@Target(AnnotationTarget.FUNCTION)
+annotation class OnRequest(val type: String)
+
+/**
+ * Annotation that is used to mark methods of controller class that should pre-process responses
+ *
+ * @param type {String} when we receive message with this type, this method invocation is triggered
+ */
+@Target(AnnotationTarget.FUNCTION)
+annotation class OnResponse(val type: String)
