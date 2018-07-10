@@ -487,11 +487,13 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
         val serializedPkg = Package.serialize(pkg)
                 ?: throw IllegalArgumentException("Can not write empty package")
 
-        if (maxPacketSizeBytes < serializedPkg.size)
+        val compressedAndSerializedPkg = CompressionUtils.compress(serializedPkg)
+
+        if (maxPacketSizeBytes < compressedAndSerializedPkg.size)
             throw RuntimeException("Unable to send packages with size more than $maxPacketSizeBytes")
 
-        val packet = DatagramPacket(serializedPkg, serializedPkg.size, recipient.toInetAddress(), recipient.port)
-        logger.info("Sending: ${packet.data.toString(StandardCharsets.UTF_8)}")
+        val packet = DatagramPacket(compressedAndSerializedPkg, compressedAndSerializedPkg.size, recipient.toInetAddress(), recipient.port)
+        logger.info("Sending: $pkg")
 
         clientSocket.send(packet)
     }
@@ -500,7 +502,10 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      * Parses datagram packets and get packages
      */
     private fun readPackage(datagramPacket: DatagramPacket): Package? {
-        return Package.deserialize(datagramPacket.data)
+        val serializedAndCompressedPkg = datagramPacket.data
+        val serializedAndDecompressedPkg = CompressionUtils.decompress(serializedAndCompressedPkg)
+
+        return Package.deserialize(serializedAndDecompressedPkg)
     }
 
     /**

@@ -1,9 +1,9 @@
-package net.stits.osen
+package net.stits.osen.controller
 
 import kotlinx.coroutines.experimental.runBlocking
-import net.stits.osen.controller.TOPIC_TEST
-import net.stits.osen.controller.TestMessageTypes
-import net.stits.osen.controller.TestPayload
+import net.stits.osen.Address
+import net.stits.osen.Message
+import net.stits.osen.P2P
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.springframework.beans.factory.annotation.Autowired

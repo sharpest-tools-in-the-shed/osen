@@ -3,6 +3,8 @@ package net.stits.osen
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 import java.util.logging.Logger
+import java.util.zip.Deflater
+import java.util.zip.Inflater
 
 
 /**
@@ -25,5 +27,32 @@ class SerializationUtils {
 
         fun <T> jSONToAny(json: String, clazz: Class<T>): T? = mapper.readValue(json, clazz)
         fun <T> bytesToAny(bytes: ByteArray, clazz: Class<T>): T? = mapper.readValue(bytes, clazz)
+    }
+}
+
+class CompressionUtils {
+    companion object {
+        fun compress(data: ByteArray): ByteArray {
+            val deflater = Deflater(Deflater.BEST_SPEED)
+            deflater.setInput(data)
+            deflater.finish()
+
+            val output = ByteArray(data.size)
+            val size = deflater.deflate(output)
+            deflater.end()
+
+            return output.copyOfRange(0, size)
+        }
+
+        fun decompress(data: ByteArray): ByteArray {
+            val inflater = Inflater()
+            inflater.setInput(data)
+
+            val output = ByteArray(data.size * 10)
+            val size = inflater.inflate(output)
+            inflater.end()
+
+            return output.copyOfRange(0, size)
+        }
     }
 }

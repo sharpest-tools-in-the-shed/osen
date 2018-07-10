@@ -1,5 +1,6 @@
-package net.stits.osen
+package net.stits.osen.controller
 
+import net.stits.osen.P2P
 import org.springframework.boot.SpringApplication
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.context.annotation.Bean
