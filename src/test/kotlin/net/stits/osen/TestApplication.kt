@@ -6,8 +6,8 @@ import org.springframework.context.annotation.Bean
 
 
 @SpringBootApplication
-open class FirstApplication {
-    private val packageToScan = FirstApplication::class.java.`package`.name
+open class TestApplication {
+    private val packageToScan = TestApplication::class.java.`package`.name
 
     @Bean()
     open fun netInitializer(): P2P {
@@ -17,5 +17,5 @@ open class FirstApplication {
 }
 
 fun main(args: Array<String>) {
-    SpringApplication.run(FirstApplication::class.java, *args)
+    SpringApplication.run(TestApplication::class.java, *args)
 }

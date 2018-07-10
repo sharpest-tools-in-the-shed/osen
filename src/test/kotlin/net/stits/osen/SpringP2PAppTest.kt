@@ -1,6 +1,5 @@
 package net.stits.osen
 
-import kotlinx.coroutines.experimental.async
 import kotlinx.coroutines.experimental.runBlocking
 import net.stits.osen.controller.TOPIC_TEST
 import net.stits.osen.controller.TestMessageTypes
@@ -12,9 +11,12 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner
 
 
+/**
+ * Sometimes tests may fail because of UDP not sending messages
+ */
 @RunWith(SpringJUnit4ClassRunner::class)
 @SpringBootTest
-class Test {
+class SpringP2PAppTest {
     @Autowired
     lateinit var p2p: P2P
     private val receiver = Address("localhost", 1337)
@@ -42,7 +44,7 @@ class Test {
         val message = Message(TOPIC_TEST, TestMessageTypes.TEST_MULTIPLE_REQUESTS, "some payload")
 
         repeat(200) {
-            async {
+            runBlocking {
                 val response = p2p.requestFrom<String>(receiver) { message }
                 assert(response == "some payload")
             }
@@ -55,11 +57,4 @@ class Test {
             Message(TOPIC_TEST, TestMessageTypes.TEST_SIMPLE_SEND, "test")
         }
     }
-}
-
-fun assertThrows(code: () -> Unit) {
-    try {
-        code()
-        assert(false)
-    } catch (e: Exception) { }
 }

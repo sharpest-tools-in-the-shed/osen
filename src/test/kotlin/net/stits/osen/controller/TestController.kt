@@ -20,7 +20,7 @@ data class TestPayload(val text: String = "test")
  * You can autowire everything spring allows to autowire
  */
 @P2PController(TOPIC_TEST)
-class ExampleController(private val service: TestService) {
+class TestController(private val service: TestService) {
     /**
      * You can write handlers in any way you like:
      *      handleTestRequest()

@@ -22,6 +22,11 @@ import kotlin.concurrent.thread
 typealias TopicHandlers = HashMap<String, TopicController>
 
 /**
+ * Type of callbacks that invokes at different lifecycle steps
+ */
+typealias PackageModifier = (pack: Package) -> Unit
+
+/**
  * Object containing controller and mapping [Message type -> Method that handles this message type]
  * Only one handler per unique together Topic and Type is possible right now.
  *
@@ -44,6 +49,7 @@ data class TopicController(
  * TODO: maybe implement flows in TCP? it would be nice to write flows like methods of controller (absolutely sequentially)
  * TODO: split this class into 2: first handles all annotation stuff, second handles networking
  * TODO: add annotation @SpringP2PApplication(port) that starts network when annotating some class - this is not possible (or you need to change spring initialization procedure)
+ * TODO: switch request-response to TCP
  *
  * On construction it scans all packages (or package you pass to it) and finds classes annotated with @P2PController,
  * adds them to Spring Context, then it finds all methods of this class with annotations and saves this information.
@@ -58,6 +64,8 @@ data class TopicController(
 class P2P(private val basePackages: Array<String>, private val maxPacketSizeBytes: Int = MAX_PACKET_SIZE_BYTES) {
     private val topicHandlers: TopicHandlers = hashMapOf()
     private val clientSocket = DatagramSocket()
+    private var afterPackageReceived: PackageModifier? = null
+    private var beforePackageSent: PackageModifier? = null
 
     @Autowired
     lateinit var context: GenericApplicationContext
@@ -73,11 +81,23 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
     val responses = hashMapOf<Int, Any?>()
 
     /**
-     * This method is invoked by Spring. It scans through specified packages, finds all needed classes and methods
-     * and then initializes network
+     * This method is invoked by Spring. It scans classpath and then initializes network
      */
     @PostConstruct
     private fun init() {
+        scanClasspathAndP2PAddControllers()
+
+        logger.info("Spring P2P extension successfully initialized, starting network up...")
+
+        thread {
+            initNetwork()
+        }
+    }
+
+    /**
+     * This method scans through specified packages, finds all needed classes and methods
+     */
+    private fun scanClasspathAndP2PAddControllers() {
         val provider = ClassPathScanningCandidateComponentProvider(false)
         provider.addIncludeFilter(AnnotationTypeFilter(P2PController::class.java))
 
@@ -109,12 +129,6 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
                 logger.info("Found node.port spring property")
                 listeningPort = portFromProps.toInt()
             }
-        }
-
-        logger.info("Spring P2P extension successfully initialized, starting network up...")
-
-        thread {
-            initNetwork()
         }
     }
 
@@ -280,6 +294,10 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
 
             logger.info("Read $pkg from $sender")
 
+            // here MITM can be prevented
+            if (afterPackageReceived != null)
+                afterPackageReceived!!(pkg)
+
             val actualSender = Address(sender.host, pkg.metadata.port)
             logger.info("$sender is actually $actualSender")
 
@@ -293,7 +311,6 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
                 continue
             }
 
-            // TODO: prevent MITM
             when (session.getStage()) {
                 SessionStage.REQUEST -> handleOnRequestInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
                 SessionStage.RESPONSE -> handleOnResponseInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
@@ -381,7 +398,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
     }
 
     companion object {
-        val logger = loggerFor(P2P::class.java)
+        val logger = loggerFor<P2P>()
     }
 
     /**
@@ -451,8 +468,13 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      * This function can be used to implement some non-standard logic
      */
     fun sendMessage(recipient: Address, message: Message, listeningPort: Int, session: Session): Package {
+        val serializedMessage = message.serialize()
         val metadata = PackageMetadata(listeningPort, session)
-        val pkg = Package(message.serialize(), metadata)
+        val pkg = Package(serializedMessage, metadata)
+
+        if (beforePackageSent != null)
+            beforePackageSent!!(pkg)
+
         writePackage(pkg, recipient, maxPacketSizeBytes)
 
         return pkg
@@ -479,6 +501,20 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      */
     private fun readPackage(datagramPacket: DatagramPacket): Package? {
         return Package.deserialize(datagramPacket.data)
+    }
+
+    /**
+     * Sets callback that executes just after package is received
+     */
+    fun setAfterPackageReceived(modifier: PackageModifier) {
+        afterPackageReceived = modifier
+    }
+
+    /**
+     * Sets callback that executes just before package is sent
+     */
+    fun setBeforePackageSent(modifier: PackageModifier) {
+        beforePackageSent = modifier
     }
 }
 
