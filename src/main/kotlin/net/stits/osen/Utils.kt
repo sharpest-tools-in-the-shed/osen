@@ -17,10 +17,10 @@ inline fun <reified T> loggerFor(): Logger = Logger.getLogger(T::class.java.cano
  */
 class SerializationUtils {
     companion object {
-        val mapper = ObjectMapper().registerModule(KotlinModule())
+        val mapper: ObjectMapper = ObjectMapper().registerModule(KotlinModule())
 
-        fun anyToJSON(obj: Any) = mapper.writeValueAsString(obj)
-        fun anyToBytes(obj: Any) = mapper.writeValueAsBytes(obj)
+        fun anyToJSON(obj: Any?): String = mapper.writeValueAsString(obj)
+        fun anyToBytes(obj: Any?): ByteArray = mapper.writeValueAsBytes(obj)
 
         inline fun <reified T> jSONToAny(json: String): T? = mapper.readValue(json, T::class.java)
         inline fun <reified T> bytesToAny(bytes: ByteArray): T? = mapper.readValue(bytes, T::class.java)
