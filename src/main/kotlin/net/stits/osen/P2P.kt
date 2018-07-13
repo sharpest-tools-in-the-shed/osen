@@ -90,7 +90,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
         logger.info("Spring P2P extension successfully initialized, starting network up...")
 
         thread {
-            initNetwork()
+            initUDP()
         }
     }
 
@@ -273,7 +273,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      * [node 1]: sendTo() -> [node 2]: @On
      * [node 1]: requestFrom() -> [node 2]: @OnRequest -> [node 1]: @OnResponse
      */
-    private fun initNetwork() {
+    private fun initUDP() {
         val serverSocket = DatagramSocket(listeningPort)
         val packet = DatagramPacket(ByteArray(maxPacketSizeBytes), maxPacketSizeBytes)
 
