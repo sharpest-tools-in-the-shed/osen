@@ -8,11 +8,11 @@ import org.springframework.beans.factory.config.BeanDefinition
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
 import org.springframework.context.support.GenericApplicationContext
 import org.springframework.core.type.filter.AnnotationTypeFilter
+import org.springframework.core.type.filter.AssignableTypeFilter
 import java.lang.reflect.Method
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.nio.charset.StandardCharsets
-import java.util.*
 import javax.annotation.PostConstruct
 import kotlin.concurrent.thread
 
@@ -20,6 +20,8 @@ import kotlin.concurrent.thread
  * Mapping [Message topic -> Controller that handles this topic]
  */
 typealias TopicHandlers = HashMap<String, TopicController>
+
+typealias FlowHandlers = HashMap<String, FlowController>
 
 /**
  * Type of callbacks that invokes at different lifecycle steps
@@ -45,6 +47,25 @@ data class TopicController(
         val onResponseListeners: Map<String, Method>
 )
 
+data class FlowMethod(
+        val method: Method,
+        val role: FlowMethodRole
+)
+
+enum class FlowMethodRole {
+    COMMON, INITIATOR, FINALIZER
+}
+
+object FlowMessageTypes {
+    val INITIATOR = "__INITIATOR"
+    val FINALIZER = "__FINALIZER"
+}
+
+data class FlowController(
+        val controller: P2PFlow,
+        val listeners: Map<String, FlowMethod>
+)
+
 /**
  * TODO: maybe implement flows in TCP? it would be nice to write flows like methods of controller (absolutely sequentially)
  * TODO: split this class into 2: first handles all annotation stuff, second handles networking
@@ -63,6 +84,8 @@ data class TopicController(
  */
 class P2P(private val basePackages: Array<String>, private val maxPacketSizeBytes: Int = MAX_PACKET_SIZE_BYTES) {
     private val topicHandlers: TopicHandlers = hashMapOf()
+    private val flowHandlers: FlowHandlers = hashMapOf()
+
     private val clientSocket = DatagramSocket()
     private var afterPackageReceived: PackageModifier? = null
     private var beforePackageSent: PackageModifier? = null
@@ -85,7 +108,15 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      */
     @PostConstruct
     private fun init() {
-        scanClasspathAndP2PAddControllers()
+        scanClasspathAndAddP2PControllers()
+        scanClasspathAndAddFlows()
+
+        // configuring port according to node.port if specified
+        val portFromProps = context.environment.getProperty("node.port")
+        if (portFromProps != null) {
+            logger.info("Found node.port spring property")
+            listeningPort = portFromProps.toInt()
+        }
 
         logger.info("Spring P2P extension successfully initialized, starting network up...")
 
@@ -94,10 +125,19 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
         }
     }
 
+    inline fun <reified T, reified P : Any?> startFlow(counterParty: Address, providePayload: () -> P?) {
+        val flowInitiatorMethod = T::class.java.methods.firstOrNull { it.isAnnotationPresent(FlowInitiator::class.java) }
+                ?: throw RuntimeException("No method annotated with @FlowInitiator in class ${T::class.java.canonicalName}")
+
+        checkMethodHasOnlyOneArgumentWithSpecifiedType(T::class.java.canonicalName, flowInitiatorMethod, providePayload(), P::class.java)
+
+        flowInitiatorMethod.invoke()
+    }
+
     /**
      * This method scans through specified packages, finds all needed classes and methods
      */
-    private fun scanClasspathAndP2PAddControllers() {
+    private fun scanClasspathAndAddP2PControllers() {
         val provider = ClassPathScanningCandidateComponentProvider(false)
         provider.addIncludeFilter(AnnotationTypeFilter(P2PController::class.java))
 
@@ -122,15 +162,34 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
             val beanInstance = context.getBean(beanClass)
             val topicController = TopicController(beanInstance, onListeners, onRequestListeners, onResponseListeners)
             topicHandlers[messageTopic] = topicController
-
-            // configuring port according to node.port if specified
-            val portFromProps = context.environment.getProperty("node.port")
-            if (portFromProps != null) {
-                logger.info("Found node.port spring property")
-                listeningPort = portFromProps.toInt()
-            }
         }
     }
+
+    private fun scanClasspathAndAddFlows() {
+        val provider = ClassPathScanningCandidateComponentProvider(false)
+        provider.addIncludeFilter(AssignableTypeFilter(P2PFlow::class.java))
+
+        val beanDefinitions = linkedSetOf<BeanDefinition>()
+        basePackages.forEach { pack -> beanDefinitions.addAll(provider.findCandidateComponents(pack)) }
+        beanDefinitions.forEach { beanDefinition ->
+            // adding found @P2PControllers to spring context
+            val beanClass = Class.forName(beanDefinition.beanClassName)
+            context.registerBean(beanClass)
+
+            // getting topic name
+            val messageTopic = beanClass.name
+            logger.info("Found P2P flow: ${beanClass.canonicalName}")
+
+            // finding annotated methods
+            val listeners = getAllFlowMethods(beanClass)
+
+            // adding instances of @P2PControllers to list of topic handlers
+            val beanInstance = context.getBean(beanClass)
+            val flowController = FlowController(beanInstance, listeners)
+            flowHandlers[messageTopic] = flowController
+        }
+    }
+
 
     /**
      * This method is used to check there are no unexpected arguments on controller methods and throw exception at startup
@@ -185,6 +244,20 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
         }
     }
 
+    private fun getAllFlowMethods(beanClass: Class<*>): Map<String, FlowMethod> {
+        return beanClass.methods
+                .map { method ->
+                    val role = when {
+                        method.isAnnotationPresent(FlowInitiator::class.java) -> FlowMethodRole.INITIATOR
+                        method.isAnnotationPresent(FlowFinalizer::class.java) -> FlowMethodRole.FINALIZER
+                        else -> FlowMethodRole.COMMON
+                    }
+
+                    FlowMethod(method, role)
+                }
+                .associateBy { it.method.name }
+    }
+
     /**
      * Finds all methods of a given class which have @On annotation
      *
@@ -231,7 +304,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
 
             val signatureError = "@OnRequest annotated method signature is (a: <Any request payload type>, b: Address) -> <Any response payload type>"
             assertArgumentsPresentAt(beanClass, method) { signatureError }
-            assertReturnValuePresentAt(beanClass, method) { signatureError}
+            assertReturnValuePresentAt(beanClass, method) { signatureError }
 
             listeners[messageType] = method
         }
@@ -258,7 +331,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
 
             val signatureError = "@OnResponse annotated method signature is (a: <Any response payload type>, b: Address) -> <Any return value type>"
             assertArgumentsPresentAt(beanClass, method) { signatureError }
-            assertReturnValuePresentAt(beanClass, method) { signatureError}
+            assertReturnValuePresentAt(beanClass, method) { signatureError }
 
             listeners[messageType] = method
         }
@@ -305,19 +378,57 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
             val type = pkg.message.type
             val session = pkg.metadata.session
             val topicHandler = topicHandlers[topic]
+            val flowHandler = flowHandlers[topic]
 
-            if (topicHandler == null) {
-                logger.warning("No controller for topic $topic, skipping...")
+            if (topicHandler == null && flowHandler == null) {
+                logger.warning("No controller or flow for topic $topic, skipping...")
                 continue
             }
 
-            when (session.getStage()) {
-                SessionStage.REQUEST -> handleOnRequestInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
-                SessionStage.RESPONSE -> handleOnResponseInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
-                SessionStage.INACTIVE -> handleOnInvocation(topicHandler, topic, type, pkg.message, actualSender)
-                else -> logger.warning("Session ${session.id} is expired. Won't invoke anything.")
+            if (topicHandler != null) {
+                when (session.getStage()) {
+                    SessionStage.REQUEST -> handleOnRequestInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
+                    SessionStage.RESPONSE -> handleOnResponseInvocation(topicHandler, topic, type, pkg.message, actualSender, session)
+                    SessionStage.INACTIVE -> handleOnInvocation(topicHandler, topic, type, pkg.message, actualSender)
+                    else -> logger.warning("Session ${session.id} is expired. Won't invoke anything.")
+                }
+            } else if (flowHandler != null) {
+
             }
         }
+    }
+
+    private fun handleFlowMethodInvocation(flowHandler: FlowController, topic: String, type: String, message: SerializedMessage, recipient: Address) {
+        val messageHandler = when (type) {
+            FlowMessageTypes.INITIATOR -> {
+                val result = flowHandler.listeners.values.find { it.role == FlowMethodRole.INITIATOR }
+                if (result == null) {
+                    logger.warning("No flow method to handle flow initiation of topic: $topic, skipping...")
+                    return
+                }
+                result
+            }
+            FlowMessageTypes.FINALIZER -> {
+                val result = flowHandler.listeners.values.find { it.role == FlowMethodRole.FINALIZER }
+                if (result == null) {
+                    logger.warning("No flow method to handle flow finalization of topic: $topic, skipping...")
+                    return
+                }
+                result
+            }
+            else -> {
+                val result = flowHandler.listeners[type]
+                if (result == null) {
+                    logger.warning("No flow method to handle message of type: $type of topic: $topic, skipping...")
+                    return
+                }
+                result
+            }
+        }
+
+        val arguments = parseMethodArguments(messageHandler.method, recipient, message)
+
+
     }
 
     /**
@@ -414,6 +525,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      * This functions are just shorthands for sendAndReceive()
      */
     suspend inline fun <reified T : Any> requestFrom(recipient: Address, messageBuilder: () -> Message): T? = sendAndReceive(recipient, messageBuilder(), T::class.java, 5000)
+
     suspend inline fun <reified T : Any> requestFromTimeouted(recipient: Address, timeout: Long, messageBuilder: () -> Message): T? = sendAndReceive(recipient, messageBuilder(), T::class.java, timeout)
 
     /**
