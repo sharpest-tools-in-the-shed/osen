@@ -11,6 +11,7 @@ import org.springframework.core.type.filter.AnnotationTypeFilter
 import java.lang.reflect.Method
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Socket
 import java.nio.charset.StandardCharsets
 import javax.annotation.PostConstruct
 import kotlin.concurrent.thread
@@ -63,7 +64,9 @@ data class TopicController(
 class P2P(private val basePackages: Array<String>, private val maxPacketSizeBytes: Int = MAX_PACKET_SIZE_BYTES) {
     private val topicHandlers: TopicHandlers = hashMapOf()
 
-    private val clientSocket = DatagramSocket()
+    private val clientSocketUDP = DatagramSocket()
+    private val clientSocketTCP = Socket()
+
     private var afterPackageReceived: PackageModifier? = null
     private var beforePackageSent: PackageModifier? = null
 
@@ -389,8 +392,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
                 Address::class.java.isAssignableFrom(parameter.type) -> recipient
                 message.payload.isEmpty() -> null
                 else -> {
-                    message.deserialize(parameter.type)
-                            ?.payload
+                    message.deserialize(parameter.type).payload
                             ?: error("Payload (${message.payload.toString(StandardCharsets.UTF_8)}) deserialization failure, skipping...")
                 }
             }
@@ -406,7 +408,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      */
     fun sendTo(recipient: Address, messageBuilder: () -> Message) {
         val session = Session.createInactiveSession()
-        val pkg = sendMessage(recipient, messageBuilder(), listeningPort, session)
+        val pkg = sendMessageUDP(recipient, messageBuilder(), listeningPort, session)
         logger.info("Sent $pkg to $recipient with inactive session")
     }
 
@@ -421,13 +423,13 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      * This function is executed by @OnRequest annotated method with it's return value as a payload
      * It sends back response for a given session and triggers @OnResponse annotated method of controller.
      */
-    private fun respondTo(recipient: Address, session: Session, message: Message) {
+    private fun respondToUDP(recipient: Address, session: Session, message: Message) {
         when (session.getStage()) {
             SessionStage.REQUEST -> session.processLifecycle()
             else -> throw IllegalArgumentException("Session ${session.id} is in illegal stage.")
         }
 
-        val pkg = sendMessage(recipient, message, listeningPort, session)
+        val pkg = sendMessageUDP(recipient, message, listeningPort, session)
         logger.info("Responded $pkg to $recipient with session: $session")
     }
 
@@ -435,10 +437,10 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      * Sends some message creating new session and waits until response for this session appears.
      * Triggers @OnRequest annotated method of controller.
      */
-    suspend fun <T> sendAndReceive(recipient: Address, message: Message, _class: Class<T>, timeout: Long = 30000): T? {
+    suspend fun <T> sendAndReceiveUDP(recipient: Address, message: Message, _class: Class<T>, timeout: Long = 30000): T? {
         val session = Session.createSession()
 
-        val pkg = sendMessage(recipient, message, listeningPort, session)
+        val pkg = sendMessageUDP(recipient, message, listeningPort, session)
         logger.info("Sent $pkg to $recipient, waiting for response...")
 
         val response = waitForResponse(session.id, timeout)
@@ -468,7 +470,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
      * Same as sendTo() or requestFrom() but u can set all parameters by yourself
      * This function can be used to implement some non-standard logic
      */
-    fun sendMessage(recipient: Address, message: Message, listeningPort: Int, session: Session): Package {
+    fun sendMessageUDP(recipient: Address, message: Message, listeningPort: Int, session: Session): Package {
         val serializedMessage = message.serialize()
         val metadata = PackageMetadata(listeningPort, session)
         val pkg = Package(serializedMessage, metadata)
@@ -484,7 +486,7 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
     /**
      * Writes package to datagram packet
      */
-    private fun writePackage(pkg: Package, recipient: Address, maxPacketSizeBytes: Int) {
+    private fun writePackageUDP(pkg: Package, recipient: Address, maxPacketSizeBytes: Int) {
         val serializedPkg = Package.serialize(pkg)
                 ?: throw IllegalArgumentException("Can not write empty package")
 
@@ -496,13 +498,13 @@ class P2P(private val basePackages: Array<String>, private val maxPacketSizeByte
         val packet = DatagramPacket(compressedAndSerializedPkg, compressedAndSerializedPkg.size, recipient.toInetAddress(), recipient.port)
         logger.info("Sending: $pkg")
 
-        clientSocket.send(packet)
+        clientSocketUDP.send(packet)
     }
 
     /**
      * Parses datagram packets and get packages
      */
-    private fun readPackage(datagramPacket: DatagramPacket): Package? {
+    private fun readPackageUDP(datagramPacket: DatagramPacket): Package? {
         val serializedAndCompressedPkg = datagramPacket.data
         val serializedAndDecompressedPkg = CompressionUtils.decompress(serializedAndCompressedPkg)
 

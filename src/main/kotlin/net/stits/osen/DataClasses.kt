@@ -59,7 +59,7 @@ data class Session(val id: Int, private var stage: String = SessionStage.REQUEST
 /**
  * Some metadata that needed to process packages correctly
  */
-data class PackageMetadata(val port: Int, val session: Session, var additionalMetadata: ByteArray? = null) {
+data class PackageMetadata(val port: Int, var additionalMetadata: ByteArray? = null) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
@@ -67,7 +67,6 @@ data class PackageMetadata(val port: Int, val session: Session, var additionalMe
         other as PackageMetadata
 
         if (port != other.port) return false
-        if (session != other.session) return false
         if (!Arrays.equals(additionalMetadata, other.additionalMetadata)) return false
 
         return true
@@ -75,7 +74,6 @@ data class PackageMetadata(val port: Int, val session: Session, var additionalMe
 
     override fun hashCode(): Int {
         var result = port
-        result = 31 * result + session.hashCode()
         result = 31 * result + (additionalMetadata?.let { Arrays.hashCode(it) } ?: 0)
         return result
     }
@@ -135,7 +133,7 @@ data class SerializedMessage(val topic: String, val type: String, val payload: B
     /**
      * Deserializes payload in given class
      */
-    fun <T> deserialize(_class: Class<T>): Message? {
+    fun <T> deserialize(_class: Class<T>): Message {
         logger.info("Deserializing payload $payload to type ${_class.canonicalName}")
 
         val deserializedPayload = SerializationUtils.bytesToAny(payload, _class)
