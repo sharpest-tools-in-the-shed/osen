@@ -1,48 +1,12 @@
 package net.stits.osen
 
 import kotlinx.coroutines.experimental.launch
-import java.io.DataInputStream
-import java.io.DataOutputStream
+import kotlinx.coroutines.experimental.withTimeoutOrNull
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.*
+import kotlin.concurrent.thread
 
-
-/**
- * TODO:
- * Сделать подобие MQ. Сообщения приходят и кладутся в очередь. Когда сообщение приходит, запускается рабочий, который смотрит
- * пришедшие сообщения и смотрит список задач, которым нужно данное сообщение. Рабочий должен запускаться в контексе сессии,
- * чтобы была возможность отправить какой-то ответ назад.
- *
- * Список задач формируется:
- *  а) при вызове readMessage (одноразовая задача, надо как-то сделать корутиной)
- *  б) при наличии контроллера (многоразовая задача)
- *  в) при наличии флоу (многоразовая задача, пока не имплементить)
- * Рабочий выполняет задачу (сохраняет чего-нибудь, отправляет новые сообщения) и удаляет сообщение из очереди.
- */
-
-
-typealias PackageProcessor = (pack: Package) -> Any?
-typealias MessageTopic = String
-typealias MessageType = String
-
-object Flags {
-    const val QUIT = 'q'
-    const val MESSAGE = 'm'
-    const val FLOW = 'f'
-    const val RESPONSE = 'r'
-}
-
-// TODO: autoremove sessions
-data class TCPSession(private val socket: Socket) {
-    val output = DataOutputStream(socket.getOutputStream())
-    val input = DataInputStream(socket.getInputStream())
-
-    fun isClosed() = socket.isClosed
-    fun close() = socket.close()
-}
-
-const val TCP_MAX_PACKAGE_SIZE_BYTES = 1024 * 10
-const val TCP_TIMEOUT_SEC = 5
 
 class TCP(private val port: Int) {
     companion object {
@@ -54,9 +18,9 @@ class TCP(private val port: Int) {
         beforeMessageSent[topic] = modifier
     }
 
-    private val afterMessageSent = hashMapOf<MessageType, PackageModifier>()
-    fun setAfterMessageSent(topic: MessageTopic, modifier: PackageModifier) {
-        afterMessageSent[topic] = modifier
+    private val afterMessageReceived = hashMapOf<MessageType, PackageModifier>()
+    fun setAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) {
+        afterMessageReceived[topic] = modifier
     }
 
     private val activeSessions = hashMapOf<Address, TCPSession>()
@@ -72,6 +36,8 @@ class TCP(private val port: Int) {
 
     /**
      * Creates new connection and starts session
+     *
+     * TODO: проверять, если у меня уже есть сессия хотя бы с одним сокетом (настоящий и рандомный)
      */
     private fun createSession(peer: Address): TCPSession {
         val session = TCPSession(Socket(peer.host, peer.port))
@@ -80,7 +46,7 @@ class TCP(private val port: Int) {
         return session
     }
 
-    fun sessionPresents(peer: Address): Boolean {
+    private fun sessionPresents(peer: Address): Boolean {
         val cachedSession = activeSessions[peer]
 
         if (cachedSession != null && cachedSession.isClosed()) {
@@ -91,113 +57,135 @@ class TCP(private val port: Int) {
         return cachedSession != null && !cachedSession.isClosed()
     }
 
-    fun getSession(peer: Address): TCPSession? {
+    private fun getSession(peer: Address): TCPSession? {
         return activeSessions[peer]
     }
 
-    fun removeSession(peer: Address) {
+    private fun removeSession(peer: Address) {
         activeSessions.remove(peer)
     }
 
-    private val clientSocket = Socket()
-
     fun listen(processPackage: PackageProcessor) {
         val serverSocket = ServerSocket(port)
-        serverSocket.soTimeout = TCP_TIMEOUT_SEC
+        serverSocket.soTimeout = TCP_TIMEOUT_SEC * 1000
         logger.info("Listening for UDP packets on port: $port")
 
-        try {
-            val peerSocket = serverSocket.accept()
-            val peer = Address(peerSocket.inetAddress.hostName, peerSocket.port)
-            val session = createSession(peer, peerSocket)
+        thread {
+            while (true) {
+                val peerSocket = serverSocket.accept()
+                val peer = Address(peerSocket.inetAddress.hostName, peerSocket.port)
+                val session = createSession(peer, peerSocket)
 
-            launch {
-                while (!session.isClosed()) {
-                    logger.info("Got connection from: $peer")
+                launch {
+                    while (!session.isClosed()) {
+                        logger.info("Got connection from: $peer")
 
-                    val (flag, pkg) = readPackage(session)
+                        val pkg = readPackage(session)
 
-                    if (pkg == null) {
-                        logger.warning("Closing connection...")
-                        removeSession(peer)
-                        session.close()
-                        continue
+                        if (pkg == null) {
+                            logger.warning("Closing connection...")
+                            removeSession(peer)
+                            session.close()
+                            continue
+                        }
+
+                        logger.info("Read $pkg from $peer")
+
+                        val afterPackageReceived = afterMessageReceived[pkg.message.topic]
+                        if (afterPackageReceived != null)
+                            afterPackageReceived(pkg)
+
+                        val response = processPackage(pkg, peer)
+                        logger.info("Processed package: $pkg")
+
+                        if (response != null) {
+                            logger.info("Sending response: $response")
+                            val topic = pkg.message.topic
+                            val type = pkg.message.type
+                            respondTo(peer, pkg.metadata.requestId!!, Message(topic, type, response))
+                        }
                     }
 
-                    logger.info("Read $pkg from $peer")
-
-                    val afterPackageReceived = afterMessageSent[pkg.message.topic]
-                    if (afterPackageReceived != null)
-                        afterPackageReceived(pkg)
-
-                    val response = processPackage(pkg)
-                    logger.info("Processed package: $pkg, sending response: $response")
-
-                    val topic = pkg.message.topic
-                    val type = pkg.message.type
-                    sendMessage(peer, Message(topic, type, response))
+                    removeSession(peer)
                 }
-
-                removeSession(peer)
             }
-        } catch (e: Exception) {
-            logger.warning(e.localizedMessage)
         }
     }
 
-    private fun readPackage(session: TCPSession): Pair<Char, Package?> {
-        val input = session.input
-
-        val flag = input.readChar()
-
-        when (flag) {
-            Flags.QUIT -> {
-                logger.info("Connection close flag received")
-                return Pair(flag, null)
-            }
-            Flags.MESSAGE -> logger.info("Message flag received")
-            Flags.FLOW -> logger.info("Flow flag received")
-            Flags.RESPONSE -> logger.info("Response flag received")
-        }
-
-        val size = input.readInt()
-
-        val serializedCompressedPackage = ByteArray(size)
-        val receivedSize = input.read(serializedCompressedPackage)
-
-        if (receivedSize != size) {
-            logger.warning("Invalid package size received!")
-            return Pair(Flags.QUIT, null)
-        }
-
-        val serializedPackage = CompressionUtils.decompress(serializedCompressedPackage)
-
-        return Pair(flag, Package.deserialize(serializedPackage))
+    /**
+     * This function is executed by @OnRequest annotated method with it's return value as a payload
+     * It sends back response for a given session and triggers @OnResponse annotated method of controller.
+     */
+    private fun respondTo(peer: Address, responseId: Long, message: Message) {
+        val pkg = sendMessage(peer, message, Flags.RESPONSE, responseId)
+        logger.info("Responded $pkg to $peer with responseId: $responseId")
     }
 
     /**
      * Sends some message creating new session and waits until response for this session appears.
      * Triggers @OnRequest annotated method of controller.
      */
-    fun <T> sendAndReceive(peer: Address, message: Message, _class: Class<T>): T? {
-        val outPkg = sendMessage(peer, message)
+    suspend fun <T> sendAndReceive(peer: Address, message: Message, _class: Class<T>): T? {
+        val requestId = createRequest(_class)
+        val outPkg = sendMessage(peer, message, Flags.REQUEST, requestId)
         logger.info("Sent $outPkg to $peer, waiting for response...")
 
-        val session = getSession(peer)!! // after sendMessage there should be a working session
-        val inPkg = readPackage(session)
+        val response = waitForResponse(requestId, TCP_TIMEOUT_SEC.toLong())
+        removeRequest(requestId)
 
-        if (inPkg == null) {
-            logger.warning("Invalid response received")
-            return null
+        return _class.cast(response)
+    }
+
+    private fun removeRequest(id: Long) {
+        responses.remove(id)
+    }
+
+    private fun <T> createRequest(_class: Class<T>): Long {
+        val requestId = Random().nextLong()
+        val newResponse = TCPResponse(null, _class)
+
+        responses[requestId] = newResponse
+
+        return requestId
+    }
+
+    /**
+     * This map is used to store responses. After sendAndReceive() with specified invoked it watch
+     * this map for a response (request id is used as key) and returns it when response arrives.
+     *
+     * TODO: maybe make it concurrent
+     */
+    private val responses = hashMapOf<Long, TCPResponse<*>>()
+
+    fun addResponse(responseId: Long, payload: ByteArray?) {
+        if (!responses.containsKey(responseId)) {
+            logger.warning("Unknown response with id: $responseId")
+            return
         }
 
-        val deserializedMessage = inPkg.message.deserialize(_class)
+        responses[responseId]!!.payload = payload
+    }
 
-        if (deserializedMessage.payload == null) {
-            logger.warning("Null payload received")
+    /**
+     * Watches responses map for specific responseId until response appears or timeout is passed
+     */
+    private suspend fun waitForResponse(responseId: Long, timeout: Long) = withTimeoutOrNull(timeout) {
+        val delay = 5
+        repeat(timeout.div(delay).toInt()) {
+            if (!responses.containsKey(responseId)) {
+                logger.warning("Unknown request with id: $responseId")
+                return@withTimeoutOrNull null
+            }
+
+            val response = responses[responseId]
+
+            if (response!!.payload != null) {
+                logger.info("Received response: $response for request: $responseId")
+                return@withTimeoutOrNull response
+            }
+
+            kotlinx.coroutines.experimental.delay(delay)
         }
-
-        return deserializedMessage.payload
     }
 
     /**
@@ -208,9 +196,9 @@ class TCP(private val port: Int) {
         logger.info("Sent $pkg to $peer")
     }
 
-    fun sendMessage(peer: Address, message: Message): Package {
+    private fun sendMessage(peer: Address, message: Message, flag: Flag = Flags.MESSAGE, requestId: Long? = null): Package {
         val serializedMessage = message.serialize()
-        val metadata = PackageMetadata(port)
+        val metadata = PackageMetadata(port, flag, requestId)
         val pkg = Package(serializedMessage, metadata)
 
         val beforePackageSent = beforeMessageSent[message.topic]
@@ -227,6 +215,25 @@ class TCP(private val port: Int) {
         return pkg
     }
 
+    private fun readPackage(session: TCPSession): Package? {
+        val input = session.input
+
+        // TODO: maybe make size long?
+        val size = input.readInt()
+
+        val serializedCompressedPackage = ByteArray(size)
+        val receivedSize = input.read(serializedCompressedPackage)
+
+        if (receivedSize != size) {
+            logger.warning("Invalid package size received!")
+            return null
+        }
+
+        val serializedPackage = CompressionUtils.decompress(serializedCompressedPackage)
+
+        return Package.deserialize(serializedPackage)
+    }
+
     private fun writePackage(pkg: Package, session: TCPSession) {
         val serializedPkg = Package.serialize(pkg)
                 ?: throw IllegalArgumentException("Can not write empty package")
@@ -236,9 +243,8 @@ class TCP(private val port: Int) {
         if (TCP_MAX_PACKAGE_SIZE_BYTES < compressedAndSerializedPkg.size)
             throw RuntimeException("Unable to send packages with size more than $TCP_MAX_PACKAGE_SIZE_BYTES")
 
-        session.output.write(compressedAndSerializedPkg.size)
+        session.output.writeInt(compressedAndSerializedPkg.size)
         session.output.write(compressedAndSerializedPkg)
-        session.output.flush()
 
         logger.info("Sending: $pkg")
     }

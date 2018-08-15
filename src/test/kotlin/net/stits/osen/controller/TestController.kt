@@ -1,7 +1,10 @@
 package net.stits.osen.controller
 
-import net.stits.osen.*
+import net.stits.osen.Address
+import net.stits.osen.On
+import net.stits.osen.P2PController
 import org.springframework.stereotype.Service
+import javax.annotation.PostConstruct
 
 
 const val TOPIC_TEST = "TEST"
@@ -21,6 +24,11 @@ data class TestPayload(val text: String = "test")
  */
 @P2PController(TOPIC_TEST)
 class TestController(private val service: TestService) {
+    @PostConstruct
+    fun init() {
+        assert(service.doSomething("test")) { "Autowire doesn't work" }
+    }
+
     /**
      * You can write handlers in any way you like:
      *      handleTestRequest()
@@ -30,7 +38,7 @@ class TestController(private val service: TestService) {
      *      handleTestRequest(sender: Address, payload: TestPayload)
      * just make sure you passing to it no more than 2 parameters, sender is always Address (payload can be Any?)
      */
-    @OnRequest(TestMessageTypes.TEST)
+    @On(TestMessageTypes.TEST)
     fun `test single request`(payload: TestPayload, sender: Address): String {
         assert(payload.text.isNotEmpty()) { "Payload is invalid" }
         assert(sender.host.isNotEmpty()) { "Sender host is unknown" }
@@ -39,34 +47,15 @@ class TestController(private val service: TestService) {
         return "Test string payload"
     }
 
-    @OnResponse(TestMessageTypes.TEST)
-    fun `test single response`(payload: String): String {
-        assert(service.doSomething(payload)) { "Autowire doesn't work" }
-
-        return payload
-    }
-
-    @OnRequest(TestMessageTypes.TEST_NULL_PAYLOAD)
+    @On(TestMessageTypes.TEST_NULL_PAYLOAD)
     fun `test null payload request`(payload: String?): String? {
         assert(payload == null)
 
         return payload
     }
 
-    @OnResponse(TestMessageTypes.TEST_NULL_PAYLOAD)
-    fun `test null payload response`(payload: String?): String? {
-        assert(payload == null)
-
-        return payload
-    }
-
-    @OnRequest(TestMessageTypes.TEST_MULTIPLE_REQUESTS)
+    @On(TestMessageTypes.TEST_MULTIPLE_REQUESTS)
     fun `test multiple requests`(payload: String): String {
-        return payload
-    }
-
-    @OnResponse(TestMessageTypes.TEST_MULTIPLE_REQUESTS)
-    fun `test multiple responses`(payload: String): String {
         return payload
     }
 
@@ -79,7 +68,6 @@ class TestController(private val service: TestService) {
 @Service
 class TestService {
     fun doSomething(value: String): Boolean {
-        assert(value == "Test string payload") { "Payload not equal" }
         return true
     }
 }

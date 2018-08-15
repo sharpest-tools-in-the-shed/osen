@@ -1,83 +1,104 @@
 package net.stits.osen
 
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.lang.reflect.Method
 import java.net.InetAddress
+import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.*
 
 
-const val MAX_PACKET_SIZE_BYTES = 1024
-
-// TODO: this concept can be more generic allowing more complex flow to be implemented
-object SessionStage {
-    const val REQUEST = "REQUEST"
-    const val RESPONSE = "RESPONSE"
-    const val CONSUMED = "CONSUMED"
-    const val INACTIVE = "INACTIVE"
-
-    fun next(stage: String): String {
-        return when (stage) {
-            REQUEST -> RESPONSE
-            RESPONSE -> CONSUMED
-            CONSUMED -> CONSUMED
-            else -> INACTIVE
-        }
-    }
+typealias Flag = Char
+object Flags {
+    const val REQUEST: Flag = 'r'
+    const val MESSAGE: Flag = 'm'
+    const val RESPONSE: Flag = 's'
 }
 
+
 /**
- * This class incapsulates microsession for request-response interaction model. It enables us to know what method should be invoked and when.
+ * Annotation that is used to mark controller classes
+ *
+ * @param topic {String} Message Topic for which this controller is responsible
  */
-data class Session(val id: Int, private var stage: String = SessionStage.REQUEST) {
-    fun processLifecycle() {
-        check(stage != SessionStage.CONSUMED) { "Session $id is expired. Unable to switch stage." }
-        check(stage != SessionStage.INACTIVE) { "Unable to process inactive stage of session $id" }
+@Target(AnnotationTarget.CLASS)
+annotation class P2PController(val topic: String)
 
-        stage = SessionStage.next(stage)
-    }
+/**
+ * Annotation that is used to mark methods of controller class that should handle some type of messages
+ *
+ * @param type {String} when we receive message with this type, this method invocation is triggered
+ */
+@Target(AnnotationTarget.FUNCTION)
+annotation class On(val type: String)
 
-    fun getStage(): String {
-        return stage
-    }
+typealias PackageProcessor = (pack: Package, peer: Address) -> Any?
+typealias MessageTopic = String
+typealias MessageType = String
 
-    private fun setInactiveStage() {
-        stage = SessionStage.INACTIVE
-    }
+data class TCPSession(private val socket: Socket) {
+    val output = DataOutputStream(socket.getOutputStream())
+    val input = DataInputStream(socket.getInputStream())
 
-    companion object {
-        fun createSession(): Session {
-            return Session(Random().nextInt(Int.MAX_VALUE))
-        }
-
-        fun createInactiveSession(): Session {
-            val session = Session(Random().nextInt(Int.MAX_VALUE))
-            session.setInactiveStage()
-            return session
-        }
-    }
+    fun isClosed() = socket.isClosed
+    fun close() = socket.close()
 }
 
-/**
- * Some metadata that needed to process packages correctly
- */
-data class PackageMetadata(val port: Int, var additionalMetadata: ByteArray? = null) {
+const val TCP_MAX_PACKAGE_SIZE_BYTES = 1024 * 10
+const val TCP_TIMEOUT_SEC = 5
+
+data class TCPResponse<T>(var payload: ByteArray?, val _class: Class<T>) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
 
-        other as PackageMetadata
+        other as TCPResponse<*>
 
-        if (port != other.port) return false
-        if (!Arrays.equals(additionalMetadata, other.additionalMetadata)) return false
+        if (!Arrays.equals(payload, other.payload)) return false
+        if (_class != other._class) return false
 
         return true
     }
 
     override fun hashCode(): Int {
-        var result = port
-        result = 31 * result + (additionalMetadata?.let { Arrays.hashCode(it) } ?: 0)
+        var result = payload?.let { Arrays.hashCode(it) } ?: 0
+        result = 31 * result + _class.hashCode()
         return result
     }
 }
+
+/**
+ * Mapping [Message topic -> Controller that handles this topic]
+ */
+typealias TopicHandlers = HashMap<String, TopicController>
+
+/**
+ * Type of callbacks that invokes at different lifecycle steps
+ */
+typealias PackageModifier = (pack: Package) -> Unit
+
+/**
+ * Object containing controller and mapping [Message type -> Method that handles this message type]
+ * Only one handler per unique together Topic and Type is possible right now.
+ *
+ * TODO: maybe switch to concurrent hash map
+ * TODO: maybe add support for multiple handlers per topic-type
+ *
+ * @param controller {Any} @P2PController-annotated instance
+ * @param onListeners {String -> Method} mapping [MessageType -> @On annotated method]
+ * @param onRequestListeners {String -> Method} mapping [MessageType -> @OnRequest annotated method]
+ * @param onResponseListeners {String -> Method} mapping [MessageType -> @OnResponse annotated method]
+ */
+data class TopicController(
+        val controller: Any,
+        val onListeners: Map<String, Method>
+)
+
+/**
+ * Some metadata that needed to process packages correctly
+ */
+data class PackageMetadata(val port: Int, val flag: Flag, val requestId: Long? = null)
 
 /**
  * Just a wrapper around InetAddress
@@ -101,7 +122,7 @@ data class Address(val host: String, val port: Int) {
  * @param payload {Any?} any payload you want to send (if null - no payload will be sent). It would be nice to create
  * data class for each payload type you send. If remote peer has mismatched payload parameter in its @On method it will throw JsonParseException.
  */
-data class Message(val topic: String, val type: String, val payload: Any? = null) {
+data class Message(val topic: MessageTopic, val type: MessageType, val payload: Any? = null) {
     companion object {
         val logger = loggerFor<Message>()
     }
@@ -125,7 +146,7 @@ data class Message(val topic: String, val type: String, val payload: Any? = null
 /**
  * Message with serialized payload. For inner usage only.
  */
-data class SerializedMessage(val topic: String, val type: String, val payload: ByteArray) {
+data class SerializedMessage(val topic: MessageTopic, val type: MessageType, val payload: ByteArray) {
     companion object {
         val logger = loggerFor<SerializedMessage>()
     }
