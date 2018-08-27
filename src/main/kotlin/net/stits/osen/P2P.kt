@@ -150,8 +150,7 @@ class P2P(private val basePackages: Array<String>) {
      */
     private fun initTCP() {
         tcp.listen { pkg, peer ->
-            val realPeerAddress = Address(peer.host, pkg.metadata.port)
-            logger.info("$peer is actually $realPeerAddress")
+
 
             val topic = pkg.message.topic
             val type = pkg.message.type
@@ -203,7 +202,8 @@ class P2P(private val basePackages: Array<String>) {
             type: String,
             message: SerializedMessage,
             recipient: Address,
-            assertion: ((method: Method) -> Boolean)? = null): Any? {
+            assertion: ((method: Method) -> Boolean)? = null
+    ): Any? {
 
         val messageHandler = topicHandler.onListeners[type]
 

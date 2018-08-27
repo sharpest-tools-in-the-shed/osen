@@ -1,12 +1,15 @@
 package net.stits.osen
 
-import java.io.DataInputStream
-import java.io.DataOutputStream
+import kotlinx.coroutines.experimental.nio.aRead
+import kotlinx.coroutines.experimental.nio.aWrite
 import java.lang.reflect.Method
 import java.net.InetAddress
-import java.net.Socket
+import java.net.InetSocketAddress
+import java.nio.ByteBuffer
+import java.nio.channels.AsynchronousSocketChannel
 import java.nio.charset.StandardCharsets
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 
 typealias Flag = Char
@@ -37,12 +40,44 @@ typealias PackageProcessor = (pack: Package, peer: Address) -> Any?
 typealias MessageTopic = String
 typealias MessageType = String
 
-data class TCPSession(private val socket: Socket) {
-    val output = DataOutputStream(socket.getOutputStream())
-    val input = DataInputStream(socket.getInputStream())
+val timeout = 3L
+val timeunit = TimeUnit.SECONDS
 
-    fun isClosed() = socket.isClosed
-    fun close() = socket.close()
+data class TCPSession(private val channel: AsynchronousSocketChannel) {
+    companion object {
+        val logger = loggerFor<TCPSession>()
+    }
+
+    fun getAddress(): Address {
+        val address = channel.remoteAddress as InetSocketAddress
+        return Address(address.hostName, address.port)
+    }
+
+    suspend fun write(data: ByteArray) {
+        val buffer = ByteBuffer.wrap(data)
+
+        if (buffer.capacity() > TCP_MAX_PACKAGE_SIZE_BYTES) {
+            logger.warning("Unable to send more than $TCP_MAX_PACKAGE_SIZE_BYTES bytes per request")
+            return
+        }
+
+        logger.info("Writing $buffer")
+
+        channel.aWrite(buffer, timeout, timeunit)
+    }
+
+    suspend fun read(): ByteArray {
+        val buffer = ByteBuffer.allocate(TCP_MAX_PACKAGE_SIZE_BYTES)
+        val size = channel.aRead(buffer, timeout, timeunit)
+        val result = buffer.array().copyOfRange(0, size-1)
+
+        logger.info("Reading $result")
+
+        return result
+    }
+
+    fun isClosed() = !channel.isOpen
+    fun close() = channel.close()
 }
 
 const val TCP_MAX_PACKAGE_SIZE_BYTES = 1024 * 10

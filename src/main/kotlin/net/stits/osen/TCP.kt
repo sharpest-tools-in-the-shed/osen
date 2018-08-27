@@ -1,9 +1,13 @@
 package net.stits.osen
 
-import kotlinx.coroutines.experimental.launch
+import kotlinx.coroutines.experimental.channels.ReceiveChannel
+import kotlinx.coroutines.experimental.channels.produce
+import kotlinx.coroutines.experimental.nio.aAccept
+import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.withTimeoutOrNull
-import java.net.ServerSocket
+import java.net.InetSocketAddress
 import java.net.Socket
+import java.nio.channels.AsynchronousServerSocketChannel
 import java.util.*
 import kotlin.concurrent.thread
 
@@ -27,12 +31,13 @@ class TCP(private val port: Int) {
     /**
      * Starts session from existing connection
      */
-    private fun createSession(peer: Address, socket: Socket): TCPSession {
-        val session = TCPSession(socket)
-        activeSessions[peer] = session
+    private fun createSession(socket: Socket) = TCPSession(socket)
 
-        return session
+    private fun storeSession(peer: Address, session: TCPSession) {
+        activeSessions[peer] = session
     }
+
+    private fun getSessions() = activeSessions.entries
 
     /**
      * Creates new connection and starts session
@@ -65,19 +70,55 @@ class TCP(private val port: Int) {
         activeSessions.remove(peer)
     }
 
-    fun listen(processPackage: PackageProcessor) {
-        val serverSocket = ServerSocket(port)
-        serverSocket.soTimeout = TCP_TIMEOUT_SEC * 1000
-        logger.info("Listening for UDP packets on port: $port")
+    private fun sessions(serverChannel: AsynchronousServerSocketChannel) = produce {
+        while (true) {
+            val channel = serverChannel.aAccept()
+            send(TCPSession(channel))
+        }
+    }
+
+    private fun packages(sessions: ReceiveChannel<TCPSession>) = produce {
+        for (session in sessions) {
+            val pkg = readPackage(session)
+            send(pkg)
+        }
+    }
+
+    /**
+     * So, i have 2 ways where i can get a new session:
+     *  1. from listen
+     *  2. from send
+     * In both ways i should:
+     *  - check if i already have session with this peer
+     *  - add it to producer
+     *  - on new package receive add peer address from package to peer mapping
+     *
+     *             channels
+     *             /------\
+     *  write ------------------ read
+     *             \------/
+     */
+
+    fun listen(processPackage: PackageProcessor) = runBlocking {
+        val address = InetSocketAddress(port)
+
+        val serverChannel = AsynchronousServerSocketChannel.open().bind(address)
+        logger.info("Listening for packets on port: $port")
+
+        val sessions = sessions(serverChannel)
+        for (session in sessions) {
+            storeSession(session.getAddress(), session)
+        }
+
+        val packages = packages(sessions)
+        for (pkg in packages) {
+
+        }
 
         thread {
             while (true) {
-                val peerSocket = serverSocket.accept()
-                val peer = Address(peerSocket.inetAddress.hostName, peerSocket.port)
-                val session = createSession(peer, peerSocket)
-
-                launch {
-                    while (!session.isClosed()) {
+                getSessions().forEach { (peer, session) ->
+                    if (!session.isClosed()) {
                         logger.info("Got connection from: $peer")
 
                         val pkg = readPackage(session)
@@ -86,7 +127,7 @@ class TCP(private val port: Int) {
                             logger.warning("Closing connection...")
                             removeSession(peer)
                             session.close()
-                            continue
+                            return@forEach
                         }
 
                         logger.info("Read $pkg from $peer")
@@ -95,7 +136,10 @@ class TCP(private val port: Int) {
                         if (afterPackageReceived != null)
                             afterPackageReceived(pkg)
 
-                        val response = processPackage(pkg, peer)
+                        val realPeerAddress = Address(peer.host, pkg.metadata.port)
+                        logger.info("$peer is actually listening on $realPeerAddress")
+
+                        val response = processPackage(pkg, realPeerAddress)
                         logger.info("Processed package: $pkg")
 
                         if (response != null) {
@@ -207,29 +251,21 @@ class TCP(private val port: Int) {
 
         val session = if (sessionPresents(peer))
             getSession(peer)!!
-        else
-            createSession(peer)
+        else {
+            val session = createSession(peer)
+            storeSession(peer, session)
+            session
+        }
 
         writePackage(pkg, session)
 
         return pkg
     }
 
-    private fun readPackage(session: TCPSession): Package? {
-        val input = session.input
+    private suspend fun readPackage(session: TCPSession): Package? {
+        val serializedAndCompressedPackage = session.read()
 
-        // TODO: maybe make size long?
-        val size = input.readInt()
-
-        val serializedCompressedPackage = ByteArray(size)
-        val receivedSize = input.read(serializedCompressedPackage)
-
-        if (receivedSize != size) {
-            logger.warning("Invalid package size received!")
-            return null
-        }
-
-        val serializedPackage = CompressionUtils.decompress(serializedCompressedPackage)
+        val serializedPackage = CompressionUtils.decompress(serializedAndCompressedPackage)
 
         return Package.deserialize(serializedPackage)
     }
