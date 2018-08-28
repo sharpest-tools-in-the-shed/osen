@@ -1,6 +1,5 @@
 package net.stits.osen
 
-import kotlinx.coroutines.experimental.runBlocking
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.config.BeanDefinition
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider
@@ -151,7 +150,6 @@ class P2P(private val basePackages: Array<String>) {
     private fun initTCP() {
         tcp.listen { pkg, peer ->
 
-
             val topic = pkg.message.topic
             val type = pkg.message.type
             val topicHandler = topicHandlers[topic]
@@ -163,7 +161,7 @@ class P2P(private val basePackages: Array<String>) {
 
             when (pkg.metadata.flag) {
                 Flags.MESSAGE -> {
-                    handleOnInvocation(topicHandler, topic, type, pkg.message, realPeerAddress) {
+                    handleOnInvocation(topicHandler, topic, type, pkg.message, peer) {
                         if (checkHasReturnType(it)) {
                             logger.warning("Method: $it has return type, but shouldn't. Skipping...")
                             return@handleOnInvocation false
@@ -173,7 +171,7 @@ class P2P(private val basePackages: Array<String>) {
                     return@listen null
                 }
                 Flags.REQUEST -> {
-                    return@listen handleOnInvocation(topicHandler, topic, type, pkg.message, realPeerAddress) {
+                    return@listen handleOnInvocation(topicHandler, topic, type, pkg.message, peer) {
                         if (!checkHasReturnType(it)) {
                             logger.warning("Method: $it doesn't have return type, but should. Skipping...")
                             return@handleOnInvocation false
@@ -243,18 +241,18 @@ class P2P(private val basePackages: Array<String>) {
     /**
      * This function is used for a stateless message exchange. It triggers @On annotated method of controller.
      */
-    fun sendTo(recipient: Address, messageBuilder: () -> Message) {
+    suspend fun sendTo(recipient: Address, messageBuilder: () -> Message) {
         tcp.sendTo(recipient, messageBuilder)
     }
 
     /**
      * This functions are just shorthands for sendAndReceive()
      */
-    inline fun <reified T : Any> requestFrom(recipient: Address, messageBuilder: () -> Message): T? {
+    suspend inline fun <reified T : Any> requestFrom(recipient: Address, messageBuilder: () -> Message): T? {
         val message = messageBuilder()
-        return runBlocking { tcp.sendAndReceive(recipient, message, T::class.java) }
+        return tcp.sendAndReceive(recipient, message, T::class.java)
     }
 
-    fun setBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) = tcp.setBeforeMessageSent(topic, modifier)
-    fun setAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) = tcp.setAfterMessageReceived(topic, modifier)
+    fun addBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) = tcp.addBeforeMessageSent(topic, modifier)
+    fun addAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) = tcp.addAfterMessageReceived(topic, modifier)
 }

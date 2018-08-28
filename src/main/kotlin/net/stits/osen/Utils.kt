@@ -19,14 +19,14 @@ class SerializationUtils {
     companion object {
         val mapper: ObjectMapper = ObjectMapper().registerModule(KotlinModule())
 
-        fun anyToJSON(obj: Any?): String = mapper.writeValueAsString(obj)
-        fun anyToBytes(obj: Any?): ByteArray = mapper.writeValueAsBytes(obj)
+        fun anyToJSON(obj: Any): String = mapper.writeValueAsString(obj)
+        fun anyToBytes(obj: Any): ByteArray = mapper.writeValueAsBytes(obj)
 
-        inline fun <reified T> jSONToAny(json: String): T? = mapper.readValue(json, T::class.java)
-        inline fun <reified T> bytesToAny(bytes: ByteArray): T? = mapper.readValue(bytes, T::class.java)
+        inline fun <reified T : Any> jSONToAny(json: String): T = mapper.readValue(json, T::class.java)
+        inline fun <reified T : Any> bytesToAny(bytes: ByteArray): T = mapper.readValue(bytes, T::class.java)
 
-        fun <T> jSONToAny(json: String, clazz: Class<T>): T? = mapper.readValue(json, clazz)
-        fun <T> bytesToAny(bytes: ByteArray, clazz: Class<T>): T? = mapper.readValue(bytes, clazz)
+        fun <T : Any> jSONToAny(json: String, clazz: Class<T>): T = mapper.readValue(json, clazz)
+        fun <T : Any> bytesToAny(bytes: ByteArray, clazz: Class<T>): T = mapper.readValue(bytes, clazz)
     }
 }
 

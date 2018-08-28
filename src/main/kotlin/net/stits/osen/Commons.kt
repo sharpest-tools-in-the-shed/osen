@@ -142,6 +142,9 @@ data class Address(val host: String, val port: Int) {
     fun toInetAddress(): InetAddress {
         return InetAddress.getByName(host)
     }
+    fun toInetSocketAddress(): InetSocketAddress {
+        return InetSocketAddress(host, port)
+    }
 }
 
 /**
@@ -189,7 +192,7 @@ data class SerializedMessage(val topic: MessageTopic, val type: MessageType, val
     /**
      * Deserializes payload in given class
      */
-    fun <T> deserialize(_class: Class<T>): Message {
+    fun <T : Any> deserialize(_class: Class<T>): Message {
         logger.info("Deserializing payload $payload to type ${_class.canonicalName}")
 
         val deserializedPayload = SerializationUtils.bytesToAny(payload, _class)
@@ -223,8 +226,6 @@ data class SerializedMessage(val topic: MessageTopic, val type: MessageType, val
  */
 class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     companion object {
-        val logger = loggerFor<Package>()
-
         /**
          * Deserializes from bytes
          */

@@ -52,7 +52,7 @@ class SpringP2PAppTest {
     }
 
     @Test
-    fun `test simple send`() {
+    fun `test simple send`() = runBlocking {
         p2p.sendTo(receiver) {
             Message(TOPIC_TEST, TestMessageTypes.TEST_SIMPLE_SEND, "test")
         }
