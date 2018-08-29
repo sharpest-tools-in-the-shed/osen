@@ -3,7 +3,6 @@ package net.stits.osen
 import kotlinx.coroutines.experimental.nio.aRead
 import kotlinx.coroutines.experimental.nio.aWrite
 import java.lang.reflect.Method
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.nio.channels.AsynchronousSocketChannel
@@ -43,14 +42,35 @@ typealias MessageType = String
 val timeout = 3L
 val timeunit = TimeUnit.SECONDS
 
-data class TCPSession(private val channel: AsynchronousSocketChannel) {
-    companion object {
-        val logger = loggerFor<TCPSession>()
-    }
-
+abstract class AbstractTCPSession(protected val channel: AsynchronousSocketChannel) {
     fun getAddress(): Address {
         val address = channel.remoteAddress as InetSocketAddress
         return Address(address.hostName, address.port)
+    }
+
+    fun isClosed() = !channel.isOpen
+    fun close() = channel.close()
+}
+
+class TCPReadableSession(channel: AsynchronousSocketChannel) : AbstractTCPSession(channel) {
+    companion object {
+        private val logger = loggerFor<TCPReadableSession>()
+    }
+
+    suspend fun read(): ByteArray {
+        val buffer = ByteBuffer.allocate(TCP_MAX_PACKAGE_SIZE_BYTES)
+        val size = channel.aRead(buffer, timeout, timeunit)
+        val result = buffer.array().copyOfRange(0, size-1)
+
+        logger.info("Reading $result")
+
+        return result
+    }
+}
+
+class TCPWritableSession(channel: AsynchronousSocketChannel) : AbstractTCPSession(channel) {
+    companion object {
+        private val logger = loggerFor<TCPWritableSession>()
     }
 
     suspend fun write(data: ByteArray) {
@@ -65,19 +85,6 @@ data class TCPSession(private val channel: AsynchronousSocketChannel) {
 
         channel.aWrite(buffer, timeout, timeunit)
     }
-
-    suspend fun read(): ByteArray {
-        val buffer = ByteBuffer.allocate(TCP_MAX_PACKAGE_SIZE_BYTES)
-        val size = channel.aRead(buffer, timeout, timeunit)
-        val result = buffer.array().copyOfRange(0, size-1)
-
-        logger.info("Reading $result")
-
-        return result
-    }
-
-    fun isClosed() = !channel.isOpen
-    fun close() = channel.close()
 }
 
 const val TCP_MAX_PACKAGE_SIZE_BYTES = 1024 * 10
@@ -139,12 +146,7 @@ data class PackageMetadata(val port: Int, val flag: Flag, val requestId: Long? =
  * Just a wrapper around InetAddress
  */
 data class Address(val host: String, val port: Int) {
-    fun toInetAddress(): InetAddress {
-        return InetAddress.getByName(host)
-    }
-    fun toInetSocketAddress(): InetSocketAddress {
-        return InetSocketAddress(host, port)
-    }
+    fun toInetSocketAddress() = InetSocketAddress(host, port)
 }
 
 /**
@@ -192,7 +194,7 @@ data class SerializedMessage(val topic: MessageTopic, val type: MessageType, val
     /**
      * Deserializes payload in given class
      */
-    fun <T : Any> deserialize(_class: Class<T>): Message {
+    fun <T> deserialize(_class: Class<T>): Message {
         logger.info("Deserializing payload $payload to type ${_class.canonicalName}")
 
         val deserializedPayload = SerializationUtils.bytesToAny(payload, _class)
@@ -226,6 +228,8 @@ data class SerializedMessage(val topic: MessageTopic, val type: MessageType, val
  */
 class Package(val message: SerializedMessage, val metadata: PackageMetadata) {
     companion object {
+        val logger = loggerFor<Package>()
+
         /**
          * Deserializes from bytes
          */

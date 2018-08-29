@@ -149,7 +149,6 @@ class P2P(private val basePackages: Array<String>) {
      */
     private fun initTCP() {
         tcp.listen { pkg, peer ->
-
             val topic = pkg.message.topic
             val type = pkg.message.type
             val topicHandler = topicHandlers[topic]
@@ -253,6 +252,6 @@ class P2P(private val basePackages: Array<String>) {
         return tcp.sendAndReceive(recipient, message, T::class.java)
     }
 
-    fun addBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) = tcp.addBeforeMessageSent(topic, modifier)
-    fun addAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) = tcp.addAfterMessageReceived(topic, modifier)
+    fun addBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) = tcp.setBeforeMessageSent(topic, modifier)
+    fun addAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) = tcp.setAfterMessageReceived(topic, modifier)
 }
