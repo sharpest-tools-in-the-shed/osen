@@ -10,6 +10,7 @@ import org.junit.runner.RunWith
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner
+import java.util.*
 
 
 /**
@@ -41,12 +42,31 @@ class SpringP2PAppTest {
     }
 
     @Test
-    fun `test multiple requests`() = runBlocking {
-        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_MULTIPLE_REQUESTS, "some payload")
+    fun `test bytearray payload`() = runBlocking {
+        val payload = ByteArray(30) { it.toByte() }
+
+        val response = p2p.requestFrom<ByteArray>(receiver) {
+            Message(TOPIC_TEST, TestMessageTypes.TEST_BYTEARRAY_PAYLOAD, payload)
+        }
+
+        assert(response!!.contentEquals(payload)) { "send() returned invalid response" }
+    }
+
+    private fun generateHugePayload(): String {
+        val rng = Random()
+        val res = ByteArray(3000) { rng.nextInt().toByte() }
+
+        return Base64.getEncoder().encodeToString(res)
+    }
+
+    @Test
+    fun `test multiple requests with huge payload`() = runBlocking {
+        val payload = generateHugePayload()
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_MULTIPLE_REQUESTS, payload)
 
         repeat(200) {
             val response = p2p.requestFrom<String>(receiver) { message }
-            assert(response == "some payload")
+            assert(response == payload)
             println("Request #$it")
         }
     }

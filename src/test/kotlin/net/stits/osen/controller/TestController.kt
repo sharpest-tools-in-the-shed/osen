@@ -13,6 +13,7 @@ object TestMessageTypes {
     const val TEST_NULL_PAYLOAD = "TEST_NULL_PAYLOAD"
     const val TEST_MULTIPLE_REQUESTS = "TEST_MULTIPLE_REQUESTS"
     const val TEST_SIMPLE_SEND = "TEST_SIMPLE_SEND"
+    const val TEST_BYTEARRAY_PAYLOAD = "TEST_BYTEARRAY_PAYLOAD"
 }
 
 data class TestPayload(val text: String = "test")
@@ -54,8 +55,13 @@ class TestController(private val service: TestService) {
         return payload
     }
 
+    @On(TestMessageTypes.TEST_BYTEARRAY_PAYLOAD)
+    fun `test bytearray payload`(payload: ByteArray): ByteArray {
+        return payload
+    }
+
     @On(TestMessageTypes.TEST_MULTIPLE_REQUESTS)
-    fun `test multiple requests`(payload: String): String {
+    fun `test multiple requests with huge payload`(payload: String): String {
         return payload
     }
 

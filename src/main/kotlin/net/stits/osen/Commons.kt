@@ -6,6 +6,7 @@ import kotlinx.coroutines.experimental.nio.aWrite
 import kotlinx.coroutines.experimental.runBlocking
 import java.lang.reflect.Method
 import java.net.InetSocketAddress
+import java.net.StandardSocketOptions
 import java.nio.ByteBuffer
 import java.nio.channels.AsynchronousSocketChannel
 import java.nio.charset.StandardCharsets
@@ -41,13 +42,14 @@ typealias PackageProcessor = (pack: Package, peer: Address) -> Any?
 typealias MessageTopic = String
 typealias MessageType = String
 
-val timeout = 10L
-val timeunit = TimeUnit.SECONDS
-
 abstract class AbstractTCPSession(protected val channel: AsynchronousSocketChannel) {
     fun getAddress(): Address {
         val address = channel.remoteAddress as InetSocketAddress
         return Address(address.hostName, address.port)
+    }
+
+    init {
+        channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true)
     }
 
     fun isClosed() = !channel.isOpen
@@ -61,7 +63,7 @@ class TCPReadableSession(channel: AsynchronousSocketChannel) : AbstractTCPSessio
 
     fun read(): ByteArray = runBlocking {
         val buffer = ByteBuffer.allocate(TCP_MAX_PACKAGE_SIZE_BYTES)
-        val size = channel.aRead(buffer, timeout, timeunit)
+        val size = channel.aRead(buffer, TCP_TIMEOUT_SEC, TCP_TIMEOUT_TIMEUNIT)
         val result = buffer.array().copyOfRange(0, size-1)
 
         logger.info("Reading $buffer")
@@ -75,25 +77,23 @@ class TCPWritableSession(channel: AsynchronousSocketChannel) : AbstractTCPSessio
         private val logger = loggerFor<TCPWritableSession>()
     }
 
-    fun write(data: ByteArray) {
+    fun write(data: ByteArray) = launch {
         val buffer = ByteBuffer.wrap(data)
 
         if (buffer.capacity() > TCP_MAX_PACKAGE_SIZE_BYTES) {
             logger.warning("Unable to send more than $TCP_MAX_PACKAGE_SIZE_BYTES bytes per request")
-            return
+            return@launch
         }
 
         logger.info("Write $buffer begins...")
-
-        val job = launch { channel.aWrite(buffer, timeout, timeunit) }
-        while (!job.isCancelled && !job.isCompleted) { /* why? */ }
-
+        channel.aWrite(buffer, TCP_TIMEOUT_SEC, TCP_TIMEOUT_TIMEUNIT)
         logger.info("Write $buffer complete!")
     }
 }
 
 const val TCP_MAX_PACKAGE_SIZE_BYTES = 1024 * 10
-const val TCP_TIMEOUT_SEC = 5
+const val TCP_TIMEOUT_SEC = 30L
+val TCP_TIMEOUT_TIMEUNIT = TimeUnit.SECONDS
 
 data class TCPResponse<T>(var payload: ByteArray?, val _class: Class<T>) {
     override fun equals(other: Any?): Boolean {

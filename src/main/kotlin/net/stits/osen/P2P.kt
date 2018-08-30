@@ -6,7 +6,6 @@ import org.springframework.context.annotation.ClassPathScanningCandidateComponen
 import org.springframework.context.support.GenericApplicationContext
 import org.springframework.core.type.filter.AnnotationTypeFilter
 import java.lang.reflect.Method
-import java.nio.charset.StandardCharsets
 import javax.annotation.PostConstruct
 
 /**
@@ -231,7 +230,7 @@ class P2P(private val basePackages: Array<String>) {
                 message.payload.isEmpty() -> null
                 else -> {
                     message.deserialize(parameter.type).payload
-                            ?: error("Payload (${message.payload.toString(StandardCharsets.UTF_8)}) deserialization failure, skipping...")
+                            ?: error("Payload (${message.payload}) deserialization failure, skipping...")
                 }
             }
         }

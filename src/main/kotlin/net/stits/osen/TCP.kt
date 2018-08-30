@@ -249,6 +249,7 @@ class TCP(private val port: Int) {
 
         val compressedAndSerializedPkg = CompressionUtils.compress(serializedPkg)
 
-        session.write(compressedAndSerializedPkg)
+        val job = session.write(compressedAndSerializedPkg)
+        while (!job.isCancelled && !job.isCompleted) { /* why? */ }
     }
 }
