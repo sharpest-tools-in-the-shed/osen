@@ -1,7 +1,9 @@
 package net.stits.osen
 
+import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.nio.aRead
 import kotlinx.coroutines.experimental.nio.aWrite
+import kotlinx.coroutines.experimental.runBlocking
 import java.lang.reflect.Method
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
@@ -39,7 +41,7 @@ typealias PackageProcessor = (pack: Package, peer: Address) -> Any?
 typealias MessageTopic = String
 typealias MessageType = String
 
-val timeout = 3L
+val timeout = 10L
 val timeunit = TimeUnit.SECONDS
 
 abstract class AbstractTCPSession(protected val channel: AsynchronousSocketChannel) {
@@ -57,14 +59,14 @@ class TCPReadableSession(channel: AsynchronousSocketChannel) : AbstractTCPSessio
         private val logger = loggerFor<TCPReadableSession>()
     }
 
-    suspend fun read(): ByteArray {
+    fun read(): ByteArray = runBlocking {
         val buffer = ByteBuffer.allocate(TCP_MAX_PACKAGE_SIZE_BYTES)
         val size = channel.aRead(buffer, timeout, timeunit)
         val result = buffer.array().copyOfRange(0, size-1)
 
-        logger.info("Reading $result")
+        logger.info("Reading $buffer")
 
-        return result
+        result
     }
 }
 
@@ -73,7 +75,7 @@ class TCPWritableSession(channel: AsynchronousSocketChannel) : AbstractTCPSessio
         private val logger = loggerFor<TCPWritableSession>()
     }
 
-    suspend fun write(data: ByteArray) {
+    fun write(data: ByteArray) {
         val buffer = ByteBuffer.wrap(data)
 
         if (buffer.capacity() > TCP_MAX_PACKAGE_SIZE_BYTES) {
@@ -81,9 +83,12 @@ class TCPWritableSession(channel: AsynchronousSocketChannel) : AbstractTCPSessio
             return
         }
 
-        logger.info("Writing $buffer")
+        logger.info("Write $buffer begins...")
 
-        channel.aWrite(buffer, timeout, timeunit)
+        val job = launch { channel.aWrite(buffer, timeout, timeunit) }
+        while (!job.isCancelled && !job.isCompleted) { /* why? */ }
+
+        logger.info("Write $buffer complete!")
     }
 }
 
@@ -194,7 +199,7 @@ data class SerializedMessage(val topic: MessageTopic, val type: MessageType, val
     /**
      * Deserializes payload in given class
      */
-    fun <T> deserialize(_class: Class<T>): Message {
+    fun <T : Any> deserialize(_class: Class<T>): Message {
         logger.info("Deserializing payload $payload to type ${_class.canonicalName}")
 
         val deserializedPayload = SerializationUtils.bytesToAny(payload, _class)

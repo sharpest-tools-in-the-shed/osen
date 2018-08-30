@@ -1,5 +1,6 @@
 package net.stits.osen.controller
 
+import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.runBlocking
 import net.stits.osen.Address
 import net.stits.osen.Message
@@ -40,14 +41,13 @@ class SpringP2PAppTest {
     }
 
     @Test
-    fun `test multiple requests`() {
+    fun `test multiple requests`() = runBlocking {
         val message = Message(TOPIC_TEST, TestMessageTypes.TEST_MULTIPLE_REQUESTS, "some payload")
 
         repeat(200) {
-            runBlocking {
-                val response = p2p.requestFrom<String>(receiver) { message }
-                assert(response == "some payload")
-            }
+            val response = p2p.requestFrom<String>(receiver) { message }
+            assert(response == "some payload")
+            println("Request #$it")
         }
     }
 
@@ -56,5 +56,7 @@ class SpringP2PAppTest {
         p2p.sendTo(receiver) {
             Message(TOPIC_TEST, TestMessageTypes.TEST_SIMPLE_SEND, "test")
         }
+        // this delay is needed for controller to process sent message
+        delay(3000)
     }
 }

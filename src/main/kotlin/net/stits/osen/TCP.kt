@@ -122,7 +122,7 @@ class TCP(private val port: Int) {
      * Sends some message creating new session and waits until response for this session appears.
      * Triggers @OnRequest annotated method of controller.
      */
-    suspend fun <T> sendAndReceive(peer: Address, message: Message, clazz: Class<T>): T? {
+    suspend fun <T : Any> sendAndReceive(peer: Address, message: Message, clazz: Class<T>): T? {
         val requestId = createRequest(clazz)
         val outPkg = sendMessage(peer, message, Flags.REQUEST, requestId)
         logger.info("Sent package: $outPkg to peer: $peer, waiting for response...")
@@ -131,7 +131,9 @@ class TCP(private val port: Int) {
         removeRequest(requestId)
         logger.info("Received response: $response from peer: $peer")
 
-        return clazz.cast(response)
+        val payload = response?.payload
+
+        return if (payload == null) null else SerializationUtils.bytesToAny(payload, clazz)
     }
 
     private fun removeRequest(id: Long) {
@@ -167,23 +169,28 @@ class TCP(private val port: Int) {
     /**
      * Watches responses map for specific responseId until response appears or timeout is passed
      */
-    private suspend fun waitForResponse(responseId: Long, timeout: Long) = withTimeoutOrNull(timeout) {
-        val delayMs = 5
+    private suspend fun waitForResponse(responseId: Long, timeout: Long): TCPResponse<*>? = withTimeoutOrNull(timeout) {
+        val delayMs = 1
+        var result: TCPResponse<*>? = null
+
         repeat(timeout.div(delayMs).toInt()) {
             if (!responses.containsKey(responseId)) {
                 logger.warning("Unknown request with id: $responseId")
-                return@withTimeoutOrNull null
+                result = null
             }
 
             val response = responses[responseId]
 
             if (response!!.payload != null) {
                 logger.info("Received response: $response for request: $responseId")
-                return@withTimeoutOrNull response
+                result = response
+                return@withTimeoutOrNull result
             }
 
             delay(delayMs)
         }
+
+        return@withTimeoutOrNull result
     }
 
     /**
@@ -226,7 +233,7 @@ class TCP(private val port: Int) {
         return pkg
     }
 
-    private suspend fun readPackage(session: TCPReadableSession): Package? {
+    private fun readPackage(session: TCPReadableSession): Package? {
         val serializedAndCompressedPackage = session.read()
 
         val serializedPackage = CompressionUtils.decompress(serializedAndCompressedPackage)
@@ -234,7 +241,7 @@ class TCP(private val port: Int) {
         return Package.deserialize(serializedPackage)
     }
 
-    private suspend fun writePackage(pkg: Package, session: TCPWritableSession) {
+    private fun writePackage(pkg: Package, session: TCPWritableSession) {
         logger.info("Sending: $pkg")
 
         val serializedPkg = Package.serialize(pkg)
