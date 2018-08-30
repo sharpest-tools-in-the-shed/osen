@@ -10,7 +10,6 @@ import javax.annotation.PostConstruct
 const val TOPIC_TEST = "TEST"
 object TestMessageTypes {
     const val TEST = "TEST"
-    const val TEST_NULL_PAYLOAD = "TEST_NULL_PAYLOAD"
     const val TEST_MULTIPLE_REQUESTS = "TEST_MULTIPLE_REQUESTS"
     const val TEST_SIMPLE_SEND = "TEST_SIMPLE_SEND"
     const val TEST_BYTEARRAY_PAYLOAD = "TEST_BYTEARRAY_PAYLOAD"
@@ -46,13 +45,6 @@ class TestController(private val service: TestService) {
         assert(sender.port == 1337) { "Sender port is not 1337" }
 
         return "Test string payload"
-    }
-
-    @On(TestMessageTypes.TEST_NULL_PAYLOAD)
-    fun `test null payload request`(payload: String?): String? {
-        assert(payload == null)
-
-        return payload
     }
 
     @On(TestMessageTypes.TEST_BYTEARRAY_PAYLOAD)

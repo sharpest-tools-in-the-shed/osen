@@ -92,7 +92,7 @@ class TCPWritableSession(channel: AsynchronousSocketChannel) : AbstractTCPSessio
 }
 
 const val TCP_MAX_PACKAGE_SIZE_BYTES = 1024 * 10
-const val TCP_TIMEOUT_SEC = 30L
+const val TCP_TIMEOUT_SEC = 5L
 val TCP_TIMEOUT_TIMEUNIT = TimeUnit.SECONDS
 
 data class TCPResponse<T>(var payload: ByteArray?, val _class: Class<T>) {

@@ -20,12 +20,12 @@ class TCP(private val port: Int) {
     private val sessionManager = SessionManager()
 
     private val beforeMessageSent = hashMapOf<MessageTopic, PackageModifier>()
-    fun setBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) {
+    fun putBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) {
         beforeMessageSent[topic] = modifier
     }
 
     private val afterMessageReceived = hashMapOf<MessageType, PackageModifier>()
-    fun setAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) {
+    fun putAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) {
         afterMessageReceived[topic] = modifier
     }
 
@@ -122,18 +122,19 @@ class TCP(private val port: Int) {
      * Sends some message creating new session and waits until response for this session appears.
      * Triggers @OnRequest annotated method of controller.
      */
-    suspend fun <T : Any> sendAndReceive(peer: Address, message: Message, clazz: Class<T>): T? {
+    suspend fun <T : Any> sendAndReceive(peer: Address, message: Message, clazz: Class<T>): T {
         val requestId = createRequest(clazz)
         val outPkg = sendMessage(peer, message, Flags.REQUEST, requestId)
         logger.info("Sent package: $outPkg to peer: $peer, waiting for response...")
 
-        val response = waitForResponse(requestId, TCP_TIMEOUT_SEC.toLong() * 1000)
+        val response = waitForResponse(requestId, TCP_TIMEOUT_SEC * 1000)
         removeRequest(requestId)
         logger.info("Received response: $response from peer: $peer")
 
         val payload = response?.payload
+                ?: throw RuntimeException("Unable to get response of type: ${clazz.canonicalName} from peer: $peer")
 
-        return if (payload == null) null else SerializationUtils.bytesToAny(payload, clazz)
+        return SerializationUtils.bytesToAny(payload, clazz)
     }
 
     private fun removeRequest(id: Long) {
@@ -157,7 +158,7 @@ class TCP(private val port: Int) {
      */
     private val responses = hashMapOf<Long, TCPResponse<*>>()
 
-    fun addResponse(responseId: Long, payload: ByteArray?) {
+    fun addResponse(responseId: Long, payload: ByteArray) {
         if (!responses.containsKey(responseId)) {
             logger.warning("Unknown response with id: $responseId")
             return
@@ -196,8 +197,8 @@ class TCP(private val port: Int) {
     /**
      * This function is used for a stateless message exchange. It triggers @On annotated method of controller.
      */
-    suspend fun sendTo(peer: Address, messageBuilder: () -> Message) {
-        val pkg = sendMessage(peer, messageBuilder())
+    suspend fun sendTo(peer: Address, message: Message) {
+        val pkg = sendMessage(peer, message)
         logger.info("Sent package: $pkg to peer: $peer")
     }
 
@@ -250,6 +251,7 @@ class TCP(private val port: Int) {
         val compressedAndSerializedPkg = CompressionUtils.compress(serializedPkg)
 
         val job = session.write(compressedAndSerializedPkg)
-        while (!job.isCancelled && !job.isCompleted) { /* why? */ }
+        while (!job.isCancelled && !job.isCompleted) { /* why? */
+        }
     }
 }

@@ -239,18 +239,17 @@ class P2P(private val basePackages: Array<String>) {
     /**
      * This function is used for a stateless message exchange. It triggers @On annotated method of controller.
      */
-    suspend fun sendTo(recipient: Address, messageBuilder: () -> Message) {
-        tcp.sendTo(recipient, messageBuilder)
+    suspend fun send(recipient: Address, message: Message) {
+        tcp.sendTo(recipient, message)
     }
 
     /**
      * This functions are just shorthands for sendAndReceive()
      */
-    suspend inline fun <reified T : Any> requestFrom(recipient: Address, messageBuilder: () -> Message): T? {
-        val message = messageBuilder()
+    suspend inline fun <reified T : Any> sendAndReceive(recipient: Address, message: Message): T {
         return tcp.sendAndReceive(recipient, message, T::class.java)
     }
 
-    fun addBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) = tcp.setBeforeMessageSent(topic, modifier)
-    fun addAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) = tcp.setAfterMessageReceived(topic, modifier)
+    fun addBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) = tcp.putBeforeMessageSent(topic, modifier)
+    fun addAfterMessageReceived(topic: MessageTopic, modifier: PackageModifier) = tcp.putAfterMessageReceived(topic, modifier)
 }

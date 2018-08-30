@@ -25,31 +25,20 @@ class SpringP2PAppTest {
 
     @Test
     fun `test single request and response`() = runBlocking {
-        val response = p2p.requestFrom<String>(receiver) {
-            Message(TOPIC_TEST, TestMessageTypes.TEST, TestPayload())
-        }
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST, TestPayload())
+        val response = p2p.sendAndReceive<String>(receiver, message)
 
         assert(response == "Test string payload") { "send() returned invalid response" }
     }
 
     @Test
-    fun `test null payload`() = runBlocking {
-        val response = p2p.requestFrom<String>(receiver) {
-            Message(TOPIC_TEST, TestMessageTypes.TEST_NULL_PAYLOAD, null)
-        }
-
-        assert(response == null) { "send() returned not null response" }
-    }
-
-    @Test
     fun `test bytearray payload`() = runBlocking {
         val payload = ByteArray(30) { it.toByte() }
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_BYTEARRAY_PAYLOAD, payload)
 
-        val response = p2p.requestFrom<ByteArray>(receiver) {
-            Message(TOPIC_TEST, TestMessageTypes.TEST_BYTEARRAY_PAYLOAD, payload)
-        }
+        val response = p2p.sendAndReceive<ByteArray>(receiver, message)
 
-        assert(response!!.contentEquals(payload)) { "send() returned invalid response" }
+        assert(response.contentEquals(payload)) { "send() returned invalid response" }
     }
 
     private fun generateHugePayload(): String {
@@ -65,7 +54,7 @@ class SpringP2PAppTest {
         val message = Message(TOPIC_TEST, TestMessageTypes.TEST_MULTIPLE_REQUESTS, payload)
 
         repeat(200) {
-            val response = p2p.requestFrom<String>(receiver) { message }
+            val response = p2p.sendAndReceive<String>(receiver, message)
             assert(response == payload)
             println("Request #$it")
         }
@@ -73,9 +62,8 @@ class SpringP2PAppTest {
 
     @Test
     fun `test simple send`() = runBlocking {
-        p2p.sendTo(receiver) {
-            Message(TOPIC_TEST, TestMessageTypes.TEST_SIMPLE_SEND, "test")
-        }
+        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_SIMPLE_SEND, "test")
+        p2p.send(receiver, message)
         // this delay is needed for controller to process sent message
         delay(3000)
     }
