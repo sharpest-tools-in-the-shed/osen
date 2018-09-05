@@ -7,6 +7,7 @@ import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.nio.aAccept
 import kotlinx.coroutines.experimental.nio.aConnect
+import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.withTimeoutOrNull
 import java.net.InetSocketAddress
 import java.nio.channels.AsynchronousServerSocketChannel
@@ -82,7 +83,7 @@ class TCP(private val port: Int) {
     private fun createServerSocketChannel(address: InetSocketAddress) =
         AsynchronousServerSocketChannel.open().bind(address)
 
-    fun listen(processPackage: PackageProcessor) = launch {
+    fun listen(processPackage: PackageProcessor) = runBlocking {
         val address = InetSocketAddress(port)
 
         val serverChannel = createServerSocketChannel(address)

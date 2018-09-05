@@ -61,14 +61,12 @@ class E2EMultiNodeTest {
 
     @Test
     fun `all nodes are able to send requests to each other and get response`() {
-        appContexts!!
-            .map { it.getBean(P2P::class.java) }
-            .forEachIndexed { idx, p2p ->
+        val p2ps = appContexts!!.map { it.getBean(P2P::class.java) }
+
+        repeat(200) {
+            p2ps.forEachIndexed { idx, p2p ->
                 nodesPorts.forEach { ports ->
                     val receiver = Address(host, ports.p2p)
-
-                    // to not to send myself
-                    if (p2p.listeningPort == ports.p2p) return@forEach
 
                     runBlocking {
                         val message = Message(TOPIC_TEST, TestMessageTypes.TEST, TestPayload())
@@ -78,5 +76,6 @@ class E2EMultiNodeTest {
                     }
                 }
             }
+        }
     }
 }
