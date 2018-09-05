@@ -6,7 +6,6 @@ import kotlinx.coroutines.experimental.nio.aWrite
 import kotlinx.coroutines.experimental.runBlocking
 import java.lang.reflect.Method
 import java.net.InetSocketAddress
-import java.net.StandardSocketOptions
 import java.nio.ByteBuffer
 import java.nio.channels.AsynchronousSocketChannel
 import java.nio.charset.StandardCharsets
@@ -48,25 +47,26 @@ abstract class AbstractTCPSession(protected val channel: AsynchronousSocketChann
         return Address(address.hostName, address.port)
     }
 
-    init {
-        channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true)
-    }
-
     fun isClosed() = !channel.isOpen
     fun close() = channel.close()
 }
 
 class TCPReadableSession(channel: AsynchronousSocketChannel) : AbstractTCPSession(channel) {
+    private val buffer: ByteBuffer by lazy { ByteBuffer.allocate(TCP_MAX_PACKAGE_SIZE_BYTES) }
+
     companion object {
         private val logger = loggerFor<TCPReadableSession>()
     }
 
     fun read(): ByteArray = runBlocking {
-        val buffer = ByteBuffer.allocate(TCP_MAX_PACKAGE_SIZE_BYTES)
+        buffer.clear()
+        logger.info("Reading $buffer")
+
         val size = channel.aRead(buffer, TCP_TIMEOUT_SEC, TCP_TIMEOUT_TIMEUNIT)
         val result = buffer.array().copyOfRange(0, size-1)
 
-        logger.info("Reading $buffer")
+        logger.info("Closing channel...")
+        close()
 
         result
     }
@@ -88,6 +88,9 @@ class TCPWritableSession(channel: AsynchronousSocketChannel) : AbstractTCPSessio
         logger.info("Write $buffer begins...")
         channel.aWrite(buffer, TCP_TIMEOUT_SEC, TCP_TIMEOUT_TIMEUNIT)
         logger.info("Write $buffer complete!")
+
+        logger.info("Closing channel...")
+        close()
     }
 }
 

@@ -1,10 +1,13 @@
 package net.stits.osen
 
+import kotlinx.coroutines.experimental.channels.Channel
+import kotlinx.coroutines.experimental.channels.consumeEach
 import kotlinx.coroutines.experimental.channels.produce
 import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.nio.aAccept
 import kotlinx.coroutines.experimental.nio.aConnect
+import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.withTimeoutOrNull
 import java.net.InetSocketAddress
 import java.nio.channels.AsynchronousServerSocketChannel
@@ -17,8 +20,6 @@ class TCP(private val port: Int) {
         val logger = loggerFor<TCP>()
     }
 
-    private val sessionManager = SessionManager()
-
     private val beforeMessageSent = hashMapOf<MessageTopic, PackageModifier>()
     fun putBeforeMessageSent(topic: MessageTopic, modifier: PackageModifier) {
         beforeMessageSent[topic] = modifier
@@ -29,19 +30,13 @@ class TCP(private val port: Int) {
         afterMessageReceived[topic] = modifier
     }
 
-    private fun getReadableSessions(serverChannel: AsynchronousServerSocketChannel) = produce {
-        while (true) {
-            val channel = serverChannel.aAccept()
-            send(sessionManager.createReadableSession(channel))
+    private fun getReadableSessions(serverChannel: AsynchronousServerSocketChannel) =
+        produce(capacity = Channel.UNLIMITED) {
+            while (true) {
+                val channel = serverChannel.aAccept()
+                send(TCPReadableSession(channel))
+            }
         }
-    }
-
-    private fun getPackages(session: TCPReadableSession) = produce {
-        while (true) {
-            val pkg = readPackage(session)
-            send(pkg)
-        }
-    }
 
     /**
      * So, i have 2 ways where i can get a new session:
@@ -63,9 +58,7 @@ class TCP(private val port: Int) {
 
         if (pkg == null) {
             logger.warning("Closing connection with peer: $peer...")
-            val session = sessionManager.removeReadableSession(peer)
-                    ?: throw RuntimeException("There was no readable session with peer: $peer")
-            session.close()
+
             return@launch
         }
 
@@ -75,7 +68,6 @@ class TCP(private val port: Int) {
 
         val realPeerAddress = Address(peer.host, pkg.metadata.port)
         logger.info("$peer is actually listening on $realPeerAddress")
-        sessionManager.addPeerMapping(peer, realPeerAddress)
 
         val response = processPackage(pkg, realPeerAddress)
         logger.info("Processed package: $pkg")
@@ -84,28 +76,24 @@ class TCP(private val port: Int) {
             logger.info("Sending response: $response")
             val topic = pkg.message.topic
             val type = pkg.message.type
-            respondTo(peer, pkg.metadata.requestId!!, Message(topic, type, response))
+            respondTo(realPeerAddress, pkg.metadata.requestId!!, Message(topic, type, response))
         }
     }
 
     private fun createServerSocketChannel(address: InetSocketAddress) =
-            AsynchronousServerSocketChannel.open().bind(address)
+        AsynchronousServerSocketChannel.open().bind(address)
 
-    fun listen(processPackage: PackageProcessor) = launch {
+    fun listen(processPackage: PackageProcessor) = runBlocking {
         val address = InetSocketAddress(port)
 
         val serverChannel = createServerSocketChannel(address)
         logger.info("Listening for packets on port: $port")
 
         val sessions = getReadableSessions(serverChannel)
-        for (session in sessions) launch {
-            sessionManager.putReadableSession(session.getAddress(), session)
-
-            val packages = getPackages(session)
+        sessions.consumeEach { session ->
             val peer = session.getAddress()
-            for (pkg in packages) {
-                preprocessPackage(pkg, peer, processPackage)
-            }
+            val pkg = readPackage(session)
+            preprocessPackage(pkg, peer, processPackage)
         }
     }
 
@@ -132,7 +120,7 @@ class TCP(private val port: Int) {
         logger.info("Received response: $response from peer: $peer")
 
         val payload = response?.payload
-                ?: throw RuntimeException("Unable to get response of type: ${clazz.canonicalName} from peer: $peer")
+            ?: throw RuntimeException("Unable to get response of type: ${clazz.canonicalName} from peer: $peer")
 
         return SerializationUtils.bytesToAny(payload, clazz)
     }
@@ -210,7 +198,12 @@ class TCP(private val port: Int) {
         return channel
     }
 
-    private suspend fun sendMessage(peer: Address, message: Message, flag: Flag = Flags.MESSAGE, requestId: Long? = null): Package {
+    private suspend fun sendMessage(
+        peer: Address,
+        message: Message,
+        flag: Flag = Flags.MESSAGE,
+        requestId: Long? = null
+    ): Package {
         logger.info("Sending message: $message to peer: $peer")
 
         val serializedMessage = message.serialize()
@@ -221,13 +214,8 @@ class TCP(private val port: Int) {
         if (beforePackageSent != null)
             beforePackageSent(pkg)
 
-        val cachedSession = sessionManager.getWritableSession(peer)
-        val session = if (cachedSession == null) {
-            val channel = createSocketChannel(peer)
-            val newSession = sessionManager.createWritableSession(channel)
-            sessionManager.putWritableSession(peer, newSession)
-            newSession
-        } else cachedSession
+        val channel = createSocketChannel(peer)
+        val session = TCPWritableSession(channel)
 
         writePackage(pkg, session)
 
@@ -246,7 +234,7 @@ class TCP(private val port: Int) {
         logger.info("Sending: $pkg")
 
         val serializedPkg = Package.serialize(pkg)
-                ?: throw IllegalArgumentException("Can not write empty package")
+            ?: throw IllegalArgumentException("Can not write empty package")
 
         val compressedAndSerializedPkg = CompressionUtils.compress(serializedPkg)
 

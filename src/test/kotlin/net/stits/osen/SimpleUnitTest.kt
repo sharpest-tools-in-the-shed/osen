@@ -1,10 +1,10 @@
-package net.stits.osen.controller
+package net.stits.osen
 
 import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.runBlocking
-import net.stits.osen.Address
-import net.stits.osen.Message
-import net.stits.osen.P2P
+import net.stits.osen.controller.TOPIC_TEST
+import net.stits.osen.controller.TestMessageTypes
+import net.stits.osen.controller.TestPayload
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.springframework.beans.factory.annotation.Autowired
@@ -18,14 +18,18 @@ import java.util.*
  */
 @RunWith(SpringJUnit4ClassRunner::class)
 @SpringBootTest
-class SpringP2PAppTest {
+class SimpleUnitTest {
     @Autowired
     lateinit var p2p: P2P
     private val receiver = Address("localhost", 1337)
 
     @Test
     fun `test single request and response`() = runBlocking {
-        val message = Message(TOPIC_TEST, TestMessageTypes.TEST, TestPayload())
+        val message = Message(
+            TOPIC_TEST,
+            TestMessageTypes.TEST,
+            TestPayload()
+        )
         val response = p2p.sendAndReceive<String>(receiver, message)
 
         assert(response == "Test string payload") { "send() returned invalid response" }
@@ -34,7 +38,9 @@ class SpringP2PAppTest {
     @Test
     fun `test bytearray payload`() = runBlocking {
         val payload = ByteArray(30) { it.toByte() }
-        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_BYTEARRAY_PAYLOAD, payload)
+        val message = Message(
+            TOPIC_TEST,
+            TestMessageTypes.TEST_BYTEARRAY_PAYLOAD, payload)
 
         val response = p2p.sendAndReceive<ByteArray>(receiver, message)
 
@@ -62,7 +68,9 @@ class SpringP2PAppTest {
 
     @Test
     fun `test simple send`() = runBlocking {
-        val message = Message(TOPIC_TEST, TestMessageTypes.TEST_SIMPLE_SEND, "test")
+        val message = Message(
+            TOPIC_TEST,
+            TestMessageTypes.TEST_SIMPLE_SEND, "test")
         p2p.send(receiver, message)
         // this delay is needed for controller to process sent message
         delay(3000)

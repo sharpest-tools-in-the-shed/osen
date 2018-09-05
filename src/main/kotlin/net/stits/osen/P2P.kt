@@ -7,6 +7,7 @@ import org.springframework.context.support.GenericApplicationContext
 import org.springframework.core.type.filter.AnnotationTypeFilter
 import java.lang.reflect.Method
 import javax.annotation.PostConstruct
+import kotlin.concurrent.thread
 
 /**
  * TODO: add annotation @SpringP2PApplication(port) that starts network when annotating some class - this is not possible (or you need to change spring initialization procedure)
@@ -147,43 +148,45 @@ class P2P(private val basePackages: Array<String>) {
      * Initializes network (listens for packets and executes controller methods).
      */
     private fun initTCP() {
-        tcp.listen { pkg, peer ->
-            val topic = pkg.message.topic
-            val type = pkg.message.type
-            val topicHandler = topicHandlers[topic]
+        thread {
+            tcp.listen { pkg, peer ->
+                val topic = pkg.message.topic
+                val type = pkg.message.type
+                val topicHandler = topicHandlers[topic]
 
-            if (topicHandler == null) {
-                logger.warning("No controller or flow for topic $topic, skipping...")
-                return@listen null
-            }
+                if (topicHandler == null) {
+                    logger.warning("No controller or flow for topic $topic, skipping...")
+                    return@listen null
+                }
 
-            when (pkg.metadata.flag) {
-                Flags.MESSAGE -> {
-                    handleOnInvocation(topicHandler, topic, type, pkg.message, peer) {
-                        if (checkHasReturnType(it)) {
-                            logger.warning("Method: $it has return type, but shouldn't. Skipping...")
-                            return@handleOnInvocation false
+                when (pkg.metadata.flag) {
+                    Flags.MESSAGE -> {
+                        handleOnInvocation(topicHandler, topic, type, pkg.message, peer) {
+                            if (checkHasReturnType(it)) {
+                                logger.warning("Method: $it has return type, but shouldn't. Skipping...")
+                                return@handleOnInvocation false
+                            }
+                            return@handleOnInvocation true
                         }
-                        return@handleOnInvocation true
+                        return@listen null
                     }
-                    return@listen null
-                }
-                Flags.REQUEST -> {
-                    return@listen handleOnInvocation(topicHandler, topic, type, pkg.message, peer) {
-                        if (!checkHasReturnType(it)) {
-                            logger.warning("Method: $it doesn't have return type, but should. Skipping...")
-                            return@handleOnInvocation false
+                    Flags.REQUEST -> {
+                        return@listen handleOnInvocation(topicHandler, topic, type, pkg.message, peer) {
+                            if (!checkHasReturnType(it)) {
+                                logger.warning("Method: $it doesn't have return type, but should. Skipping...")
+                                return@handleOnInvocation false
+                            }
+                            return@handleOnInvocation true
                         }
-                        return@handleOnInvocation true
                     }
-                }
-                Flags.RESPONSE -> {
-                    tcp.addResponse(pkg.metadata.requestId!!, pkg.message.payload)
-                    return@listen null
-                }
-                else -> {
-                    logger.warning("Invalid flag passed!")
-                    return@listen null
+                    Flags.RESPONSE -> {
+                        tcp.addResponse(pkg.metadata.requestId!!, pkg.message.payload)
+                        return@listen null
+                    }
+                    else -> {
+                        logger.warning("Invalid flag passed!")
+                        return@listen null
+                    }
                 }
             }
         }
