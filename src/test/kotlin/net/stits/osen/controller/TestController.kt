@@ -42,7 +42,6 @@ class TestController(private val service: TestService) {
     fun `test single request`(payload: TestPayload, sender: Address): String {
         assert(payload.text.isNotEmpty()) { "Payload is invalid" }
         assert(sender.host.isNotEmpty()) { "Sender host is unknown" }
-        assert(sender.port == 1337) { "Sender port is not 1337" }
 
         return "Test string payload"
     }
